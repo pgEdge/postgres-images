@@ -1,0 +1,83 @@
+name: build-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      pgedge_image_repo:
+        description: "Image repository to push to"
+        type: string
+        default: "ghcr.io/pgedge/pgedge-postgres-internal"
+        required: false
+      pgedge_image_republish:
+        description: "Republish images? (true/false)"
+        type: boolean
+        default: false
+      pgedge_image_dry_run:
+        description: "Dry run build? (true/false)"
+        type: boolean
+        default: false
+      pgedge_image_no_cache:
+        description: "Build without cache? (true/false)"
+        type: boolean
+        default: true
+      pgedge_image_only_postgres_version:
+        description: "Build only this Postgres version (leave blank for all)"
+        type: string
+        default: ""
+      pgedge_image_only_spock_version:
+        description: "Build only this Spock version (leave blank for all)"
+        type: string
+        default: ""
+      pgedge_image_only_arch:
+        description: "Build only this architecture (e.g. amd64, arm64)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  IMAGE_REGISTRY: ghcr.io
+  CI: 1
+  PGEDGE_IMAGE_REPO: ${{ inputs.pgedge_image_repo }}
+  PGEDGE_IMAGE_REPUBLISH: ${{ inputs.pgedge_image_republish && '1' || '0' }}
+  PGEDGE_IMAGE_DRY_RUN: ${{ inputs.pgedge_image_dry_run && '1' || '0' }}
+  PGEDGE_IMAGE_NO_CACHE: ${{ inputs.pgedge_image_no_cache && '1' || '0' }}
+  PGEDGE_IMAGE_ONLY_POSTGRES_VERSION: ${{ inputs.pgedge_image_only_postgres_version }}
+  PGEDGE_IMAGE_ONLY_SPOCK_VERSION: ${{ inputs.pgedge_image_only_spock_version }}
+  PGEDGE_IMAGE_ONLY_ARCH: ${{ inputs.pgedge_image_only_arch }}
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Setup Docker Buildx
+        run: |
+          make buildx-init
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      
+      - name: Build images
+        run: |
+          make pgedge-images
