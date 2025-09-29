@@ -72,7 +72,7 @@ You can adjust settings in the docker-compose.yaml under each service’s enviro
 - `users`: Configures which users will be created on each pgEdge node.
 - NODE_NAME — logical node name for Spock (n1 / n2)
 - Published ports are set under ports (6432 for postgres-n1, 6433 for postgres-n2)
-```sh
+
 
 Note that this configuration only takes effect when the containers are first created. To recreate the database with a new configuration, stop the running example:
 
