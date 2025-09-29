@@ -1,0 +1,190 @@
+services:
+  postgres-n1:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: postgres-n1
+    restart: always
+    environment:
+      PGEDGE_USER: pgedge
+      PGEDGE_PASSWORD: pgedge
+      POSTGRES_USER: pgedge
+      POSTGRES_PASSWORD: pgedge
+      POSTGRES_DB: acctg
+      NODE_NAME: n1
+    ports:
+      - target: 5432
+        published: 6432
+    configs:
+      - source: init-extensions
+        target: /docker-entrypoint-initdb.d/10-init-extensions.sh
+        mode: 0755
+      - source: configure-spock
+        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+        mode: 0755
+      - source: restart-postgres
+        target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
+        mode: 0755
+      - source: create-extensions
+        target: /docker-entrypoint-initdb.d/40-create-extensions.sh
+        mode: 0755
+      - source: relax-pg-hba
+        target: /docker-entrypoint-initdb.d/45-relax-pg-hba.sh
+        mode: 0755
+      - source: spock-node-n1
+        target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
+        mode: 0755
+      - source: final-restart
+        target: /docker-entrypoint-initdb.d/90-final-restart.sh
+        mode: 0755
+      - source: spock-sub-n1
+        target: /docker-entrypoint-initdb.d/96-spock-sub.sh
+        mode: 0755
+
+  postgres-n2:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: postgres-n2
+    restart: always
+    environment:
+      PGEDGE_USER: pgedge
+      PGEDGE_PASSWORD: pgedge
+      POSTGRES_USER: pgedge
+      POSTGRES_PASSWORD: pgedge
+      POSTGRES_DB: acctg
+      NODE_NAME: n2
+    ports:
+      - target: 5432
+        published: 6433
+    configs:
+      - source: init-extensions
+        target: /docker-entrypoint-initdb.d/10-init-extensions.sh
+        mode: 0755
+      - source: configure-spock
+        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+        mode: 0755
+      - source: restart-postgres
+        target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
+        mode: 0755
+      - source: create-extensions
+        target: /docker-entrypoint-initdb.d/40-create-extensions.sh
+        mode: 0755
+      - source: relax-pg-hba
+        target: /docker-entrypoint-initdb.d/45-relax-pg-hba.sh
+        mode: 0755
+      - source: spock-node-n2
+        target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
+        mode: 0755
+      - source: final-restart
+        target: /docker-entrypoint-initdb.d/90-final-restart.sh
+        mode: 0755
+      - source: spock-sub-n2
+        target: /docker-entrypoint-initdb.d/96-spock-sub.sh
+        mode: 0755
+
+configs:
+  init-extensions:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3")
+      PGCONF="$$PGDATA/postgresql.conf"
+      echo "Setting shared_preload_libraries to: $${EXTENSIONS[*]}"
+      LIBS=$$(IFS=','; echo "$${EXTENSIONS[*]}")
+      if grep -q '^[ ]*shared_preload_libraries' "$$PGCONF"; then
+        sed -i "s|^[ ]*shared_preload_libraries.*|shared_preload_libraries = '$$LIBS'|" "$$PGCONF"
+      else
+        echo "shared_preload_libraries = '$$LIBS'" >> "$$PGCONF"
+      fi
+
+  configure-spock:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      PGCONF="$$PGDATA/postgresql.conf"
+      echo "Initializing Spock + logical replication configuration in postgresql.conf"
+
+      echo "listen_addresses = '*'"              >> "$$PGCONF"
+
+      # Logical replication + required knobs
+      echo "wal_level = 'logical'"              >> "$$PGCONF"
+      echo "max_worker_processes = 10"          >> "$$PGCONF"
+      echo "max_replication_slots = 10"         >> "$$PGCONF"
+      echo "max_wal_senders = 10"               >> "$$PGCONF"
+      echo "track_commit_timestamp = 'on'"      >> "$$PGCONF"
+
+      # Spock parameters
+      echo "spock.enable_ddl_replication = 'on'"       >> "$$PGCONF"
+      echo "spock.include_ddl_repset = 'on'"           >> "$$PGCONF"
+      echo "spock.allow_ddl_from_functions = 'on'"     >> "$$PGCONF"
+      echo "spock.conflict_resolution = 'last_update_wins'" >> "$$PGCONF"
+      echo "spock.save_resolutions = 'on'"             >> "$$PGCONF"
+      echo "spock.conflict_log_level = 'DEBUG'"        >> "$$PGCONF"
+
+  restart-postgres:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      echo "Mid-sequence restart to apply base configuration..."
+      pg_ctl -D "$$PGDATA" -m fast restart
+
+  create-extensions:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis")
+      echo "Initializing extensions: $${EXTENSIONS[*]}"
+      for EXT in "$${EXTENSIONS[@]}"; do
+        echo "Creating extension: $$EXT"
+        psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" \
+          -c "CREATE EXTENSION IF NOT EXISTS \"$$EXT\";"
+      done
+
+  relax-pg-hba:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      echo "host all all 0.0.0.0/0 md5" >> "$$PGDATA/pg_hba.conf"
+      echo "host all all ::/0 md5"     >> "$$PGDATA/pg_hba.conf"
+      pg_ctl -D "$$PGDATA" -m fast reload
+
+  final-restart:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      echo "[final-restart] Restarting Postgres locally..."
+      pg_ctl -D "$$PGDATA" -m fast restart
+      echo "[final-restart] Restarting peer container too..."
+      if [ "$$NODE_NAME" = "n1" ]; then
+        docker restart postgres-n2 || echo "[final-restart] Could not restart postgres-n2 (maybe not available yet)"
+      else
+        docker restart postgres-n1 || echo "[final-restart] Could not restart postgres-n1 (maybe not available yet)"
+      fi
+      echo "[final-restart] Done."
+
+  spock-node-n1:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
+        -c "SELECT spock.node_create(node_name := 'n1', dsn := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge');"
+
+  spock-node-n2:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
+        -c "SELECT spock.node_create(node_name := 'n2', dsn := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge');"
+
+  spock-sub-n1:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      # n1 subscribes to n2
+      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
+        -c "SELECT spock.sub_create(subscription_name := 'sub_n1n2', provider_dsn := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge');"
+
+  spock-sub-n2:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      # n2 subscribes to n1
+      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
+        -c "SELECT spock.sub_create(subscription_name := 'sub_n2n1', provider_dsn := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge');"
