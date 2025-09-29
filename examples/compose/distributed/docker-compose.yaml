@@ -13,6 +13,11 @@ services:
     ports:
       - target: 5432
         published: 6432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     configs:
       - source: init-extensions
         target: /docker-entrypoint-initdb.d/10-init-extensions.sh
@@ -32,12 +37,6 @@ services:
       - source: spock-node-n1
         target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
         mode: 0755
-      - source: final-restart
-        target: /docker-entrypoint-initdb.d/90-final-restart.sh
-        mode: 0755
-      - source: spock-sub-n1
-        target: /docker-entrypoint-initdb.d/96-spock-sub.sh
-        mode: 0755
 
   postgres-n2:
     image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
@@ -53,6 +52,11 @@ services:
     ports:
       - target: 5432
         published: 6433
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     configs:
       - source: init-extensions
         target: /docker-entrypoint-initdb.d/10-init-extensions.sh
@@ -72,11 +76,28 @@ services:
       - source: spock-node-n2
         target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
         mode: 0755
-      - source: final-restart
-        target: /docker-entrypoint-initdb.d/90-final-restart.sh
-        mode: 0755
-      - source: spock-sub-n2
-        target: /docker-entrypoint-initdb.d/96-spock-sub.sh
+
+  spock-wire:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: spock-wire
+    depends_on:
+      postgres-n1:
+        condition: service_healthy
+      postgres-n2:
+        condition: service_healthy
+    environment:
+      PGUSER: pgedge
+      PGPASSWORD: pgedge
+      DBNAME: acctg
+      N1_HOST: postgres-n1
+      N2_HOST: postgres-n2
+      N1_PORT: "5432"
+      N2_PORT: "5432"
+    command: ["/bin/bash", "/wire/run.sh"]
+    restart: "no"
+    configs:
+      - source: spock-wire-script
+        target: /wire/run.sh
         mode: 0755
 
 configs:
@@ -103,14 +124,12 @@ configs:
 
       echo "listen_addresses = '*'"              >> "$$PGCONF"
 
-      # Logical replication + required knobs
       echo "wal_level = 'logical'"              >> "$$PGCONF"
       echo "max_worker_processes = 10"          >> "$$PGCONF"
       echo "max_replication_slots = 10"         >> "$$PGCONF"
       echo "max_wal_senders = 10"               >> "$$PGCONF"
       echo "track_commit_timestamp = 'on'"      >> "$$PGCONF"
 
-      # Spock parameters
       echo "spock.enable_ddl_replication = 'on'"       >> "$$PGCONF"
       echo "spock.include_ddl_repset = 'on'"           >> "$$PGCONF"
       echo "spock.allow_ddl_from_functions = 'on'"     >> "$$PGCONF"
@@ -145,20 +164,6 @@ configs:
       echo "host all all ::/0 md5"     >> "$$PGDATA/pg_hba.conf"
       pg_ctl -D "$$PGDATA" -m fast reload
 
-  final-restart:
-    content: |-
-      #!/usr/bin/env bash
-      set -Eeo pipefail
-      echo "[final-restart] Restarting Postgres locally..."
-      pg_ctl -D "$$PGDATA" -m fast restart
-      echo "[final-restart] Restarting peer container too..."
-      if [ "$$NODE_NAME" = "n1" ]; then
-        docker restart postgres-n2 || echo "[final-restart] Could not restart postgres-n2 (maybe not available yet)"
-      else
-        docker restart postgres-n1 || echo "[final-restart] Could not restart postgres-n1 (maybe not available yet)"
-      fi
-      echo "[final-restart] Done."
-
   spock-node-n1:
     content: |-
       #!/usr/bin/env bash
@@ -172,19 +177,63 @@ configs:
       set -Eeo pipefail
       psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
         -c "SELECT spock.node_create(node_name := 'n2', dsn := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge');"
-
-  spock-sub-n1:
+  spock-wire-script:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
-      # n1 subscribes to n2
-      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
-        -c "SELECT spock.sub_create(subscription_name := 'sub_n1n2', provider_dsn := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge');"
 
-  spock-sub-n2:
-    content: |-
-      #!/usr/bin/env bash
-      set -Eeo pipefail
-      # n2 subscribes to n1
-      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
-        -c "SELECT spock.sub_create(subscription_name := 'sub_n2n1', provider_dsn := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge');"
+      : "$${PGUSER:?PGUSER required}"
+      : "$${PGPASSWORD:?PGPASSWORD required}"
+      : "$${DBNAME:?DBNAME required}"
+      : "$${N1_HOST:?N1_HOST required}"
+      : "$${N2_HOST:?N2_HOST required}"
+      : "$${N1_PORT:?N1_PORT required}"
+      : "$${N2_PORT:?N2_PORT required}"
+
+      echo "[wire] Waiting for $$N1_HOST:$$N1_PORT..."
+      for i in {1..120}; do
+        if pg_isready -h "$$N1_HOST" -p "$$N1_PORT" -d "$$DBNAME" -U "$$PGUSER" >/dev/null 2>&1; then
+          echo "[wire] $$N1_HOST ready."
+          break
+        fi
+        sleep 2
+        [[ $$i -eq 120 ]] && { echo "[wire] Timeout waiting for $$N1_HOST"; exit 1; }
+      done
+
+      echo "[wire] Waiting for $$N2_HOST:$$N2_PORT..."
+      for i in {1..120}; do
+        if pg_isready -h "$$N2_HOST" -p "$$N2_PORT" -d "$$DBNAME" -U "$$PGUSER" >/dev/null 2>&1; then
+          echo "[wire] $$N2_HOST ready."
+          break
+        fi
+        sleep 2
+        [[ $$i -eq 120 ]] && { echo "[wire] Timeout waiting for $$N2_HOST"; exit 1; }
+      done
+
+      echo "[wire] Ensuring subscription on n1 (sub_n1n2)..."
+      PGPASSWORD="$$PGPASSWORD" psql -h "$$N1_HOST" -p "$$N1_PORT" -U "$$PGUSER" -d "$$DBNAME" -v ON_ERROR_STOP=1 <<'SQL'
+      DO $$$$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name = 'sub_n1n2') THEN
+          PERFORM spock.sub_create(
+            subscription_name := 'sub_n1n2',
+            provider_dsn      := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge'
+          );
+        END IF;
+      END$$$$;
+      SQL
+
+      echo "[wire] Ensuring subscription on n2 (sub_n2n1)..."
+      PGPASSWORD="$$PGPASSWORD" psql -h "$$N2_HOST" -p "$$N2_PORT" -U "$$PGUSER" -d "$$DBNAME" -v ON_ERROR_STOP=1 <<'SQL'
+      DO $$$$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name = 'sub_n2n1') THEN
+          PERFORM spock.sub_create(
+            subscription_name := 'sub_n2n1',
+            provider_dsn      := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge'
+          );
+        END IF;
+      END$$$$;
+      SQL
+
+      echo "[wire] Wiring complete."
