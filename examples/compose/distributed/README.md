@@ -1,16 +1,26 @@
-# How to run this example
+#pgEdge Distributed Postgres (2-node) — Quick Start
 
+This example spins up two pgEdge containers (postgres-n1, postgres-n2) and configures logical replication between them using Spock. A database called acctg is created on both nodes and changes replicate bi-directionally.
+
+##Prerequisites
+
+Docker & Docker Compose
+
+Ports 6432 and 6433 free on your host
+Using this Docker File
+
+
+##Using this Docker File
+The docker-compose.yaml file in this repository creates a Postgres database named acctg that is replicated between two pgEdge nodes. Before running this file, ensure that you have an installed and running copy of docker with Internet access.
+
+Then, to deploy this example, use the command:
 ```sh
 docker compose up -d
 ```
 
-# How to interact with this example
+##Connecting to acctg with psql
+You can interact with the database on each node of your two-node cluster with psql. For convenience, open two terminal windows, and use the following commands to connect to each node. To open a psql session on the first node, run:
 
-This configuration creates a database called acctg that's replicated between two pgEdge nodes.
-
-## Connect to `acctg` with Docker
-
-To open a `psql` session on the first node, run:
 ```sh
 docker compose exec postgres-n1 psql -U pgedge acctg
 ```
@@ -20,7 +30,8 @@ Likewise, to open a `psql` session on the second node, run:
 docker compose exec postgres-n2 psql -U pgedge acctg
 ```
 
-## Try out replication
+##Exercising Replication
+To demonstrate that the nodes are replicating, you can confirm that a row is replicated from a table on one node to the same table on the other node.
 
 1. Create a table on the first node:
 ```sh
@@ -35,9 +46,8 @@ docker compose exec postgres-n2 psql -U pgedge acctg -c "insert into example (id
 docker compose exec postgres-n1 psql -U pgedge acctg -c "select * from example;"
 ```
 
-## Load the Northwind example dataset
-
-The Northwind example dataset is a PostgreSQL database dump that you can use to try replication with a more realistic database.  To load the Northwind dataset into your pgEdge database, run:
+##Loading the Northwind Sample Dataset
+The Northwind sample dataset is a Postgres database dump that you can use to try replication with a more realistic database. To load the Northwind dataset into your pgEdge database, run:
 
 ```sh
 curl https://downloads.pgedge.com/platform/examples/northwind/northwind.sql | docker compose exec -T postgres-n1 psql -U pgedge acctg
@@ -49,31 +59,55 @@ Now, try querying one of the new tables from the other node:
 docker compose exec postgres-n2 psql -U pgedge acctg -c "select * from northwind.shippers"
 ```
 
-## Connect to `acctg` from another client
+##Connecting to acctg from Another Client
+If you have psql, pgAdmin, or another Postgres client installed on your host machine, you can use these connection strings to connect to each node:
 
-If you have `psql`, pgAdmin, or another client installed on your host machine, you can use these connection strings to connect to each node:
-
-- First node: `host=localhost port=6432 user=pgedge password=pgedge dbname=acctg`
-- Second node: `host=localhost port=6433 user=pgedge password=pgedge dbname=acctg`
-
-For example, using `psql`:
+First node: host=localhost port=6432 user=pgedge password=pgedge dbname=acctg
+Second node: host=localhost port=6433 user=pgedge password=pgedge dbname=acctg
+For example, using psql:
 
 ```sh
 psql 'host=localhost port=6432 user=pgedge password=pgedge dbname=acctg'
 ```
 
 # How to modify this example
+Modifying this Example
+Properties specified in a service's environment define the deployment details. You can adjust these settings to customize the deployment.
 
-You can adjust settings in the docker-compose.yaml under each service’s environment:
+```sh
+environment:
+      PGEDGE_USER: pgedge
+      PGEDGE_PASSWORD: pgedge
+      POSTGRES_USER: pgedge
+      POSTGRES_PASSWORD: pgedge
+      POSTGRES_DB: acctg
+      NODE_NAME: n1
+```
+POSTGRES_USER is the name of the database superuser; the default is pgedge.
+POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
+POSTGRES_DB is the database name; the default is acctg.
+PGEDGE_USER is the name of the replication user; the default is pgedge.
+PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
+NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
+The ports section describes the ports in use by the node:      
+```sh
+ports:
+      - target: 5432
+        published: 6432
+```
 
-- POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB — database superuser, password, and database name (default: pgedge / pgedge / acctg)
-- PGEDGE_USER, PGEDGE_PASSWORD — application/replication user and password (default: pgedge / pgedge)
-- `nodes`: Configures the pgEdge nodes.
-- `users`: Configures which users will be created on each pgEdge node.
-- NODE_NAME — logical node name for Spock (n1 / n2)
-- Published ports are set under ports (6432 for postgres-n1, 6433 for postgres-n2)
 
 
+Our published ports are set to 6432 for postgres-n1 and 6433 for postgres-n2.
+Our .yaml file includes a clause that defines the creation of each node:
+```sh
+spock-node-n1:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
+        -c "SELECT spock.node_create(node_name := 'n1', dsn := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge');"
+```
 Note that this configuration only takes effect when the containers are first created. To recreate the database with a new configuration, stop the running example:
 
 ```sh
