@@ -64,6 +64,7 @@ If you have psql, pgAdmin, or another Postgres client installed on your host mac
 
 1. First node: host=localhost port=6432 user=pgedge password=pgedge dbname=example_db.
 2. Second node: host=localhost port=6433 user=pgedge password=pgedge dbname=example_db.
+   
 For example, using psql:
 
 ```sh
@@ -82,12 +83,13 @@ environment:
       POSTGRES_DB: example_db
       NODE_NAME: n1
 ```
-POSTGRES_USER is the name of the database superuser; the default is pgedge.
-POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
-POSTGRES_DB is the database name; the default is example_db.
-PGEDGE_USER is the name of the replication user; the default is pgedge.
-PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
-NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
+1.POSTGRES_USER is the name of the database superuser; the default is pgedge.
+2.POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
+3.POSTGRES_DB is the database name; the default is example_db.
+4.PGEDGE_USER is the name of the replication user; the default is pgedge.
+5.PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
+6.NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
+
 The ports section describes the ports in use by the node:      
 ```sh
 ports:
