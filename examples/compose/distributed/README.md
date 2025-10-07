@@ -83,12 +83,12 @@ environment:
       POSTGRES_DB: example_db
       NODE_NAME: n1
 ```
-1.POSTGRES_USER is the name of the database superuser; the default is pgedge.
-2.POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
-3.POSTGRES_DB is the database name; the default is example_db.
-4.PGEDGE_USER is the name of the replication user; the default is pgedge.
-5.PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
-6.NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
+1. POSTGRES_USER is the name of the database superuser; the default is pgedge.
+2. POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
+3. POSTGRES_DB is the database name; the default is example_db.
+4. PGEDGE_USER is the name of the replication user; the default is pgedge.
+5. PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
+6. NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
 
 The ports section describes the ports in use by the node:      
 ```sh
