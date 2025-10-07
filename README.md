@@ -66,8 +66,8 @@ This repository includes two Compose examples you can try out:
 
 Runs a single Postgres instance using the standard image and initializes extensions.
 
-`cd examples/compose/enterprise`
-`docker compose up`
+- `cd examples/compose/enterprise`
+- `docker compose up`
 
 This example utilizes the standard image and handles initializing and creating extensions.
 
@@ -77,8 +77,8 @@ Runs two pgEdge Postgres nodes (n1 / n2) with Spock logical replication preconfi
 This example demonstrates bi-directional replication and includes instructions for testing with the Northwind dataset.
 Once Postgres initialization completes, you can connect to the database in a separate shell:
 
-`cd examples/compose/distributed`
-`docker compose up -d`
+- `cd examples/compose/distributed`
+- `docker compose up -d`
 
 
 
