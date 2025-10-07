@@ -8,7 +8,7 @@ services:
       PGEDGE_PASSWORD: pgedge
       POSTGRES_USER: pgedge
       POSTGRES_PASSWORD: pgedge
-      POSTGRES_DB: acctg
+      POSTGRES_DB: example_db
       NODE_NAME: n1
     ports:
       - target: 5432
@@ -34,7 +34,7 @@ services:
       - source: relax-pg-hba
         target: /docker-entrypoint-initdb.d/45-relax-pg-hba.sh
         mode: 0755
-      - source: spock-node-n1
+      - source: spock-node
         target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
         mode: 0755
 
@@ -47,7 +47,7 @@ services:
       PGEDGE_PASSWORD: pgedge
       POSTGRES_USER: pgedge
       POSTGRES_PASSWORD: pgedge
-      POSTGRES_DB: acctg
+      POSTGRES_DB: example_db
       NODE_NAME: n2
     ports:
       - target: 5432
@@ -73,10 +73,11 @@ services:
       - source: relax-pg-hba
         target: /docker-entrypoint-initdb.d/45-relax-pg-hba.sh
         mode: 0755
-      - source: spock-node-n2
+      - source: spock-node
         target: /docker-entrypoint-initdb.d/50-spock-nodes.sh
         mode: 0755
 
+  # Generic wiring job: loops over all nodes in NODES and creates all pairwise subscriptions.
   spock-wire:
     image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
     container_name: spock-wire
@@ -85,14 +86,13 @@ services:
         condition: service_healthy
       postgres-n2:
         condition: service_healthy
+
     environment:
       PGUSER: pgedge
       PGPASSWORD: pgedge
-      DBNAME: acctg
-      N1_HOST: postgres-n1
-      N2_HOST: postgres-n2
-      N1_PORT: "5432"
-      N2_PORT: "5432"
+      DBNAME: example_db
+      # Format: name:host:port entries separated by commas. Add more nodes as needed.
+      NODES: "n1:postgres-n1:5432,n2:postgres-n2:5432"
     command: ["/bin/bash", "/wire/run.sh"]
     restart: "no"
     configs:
@@ -123,7 +123,6 @@ configs:
       echo "Initializing Spock + logical replication configuration in postgresql.conf"
 
       echo "listen_addresses = '*'"              >> "$$PGCONF"
-
       echo "wal_level = 'logical'"              >> "$$PGCONF"
       echo "max_worker_processes = 10"          >> "$$PGCONF"
       echo "max_replication_slots = 10"         >> "$$PGCONF"
@@ -164,76 +163,95 @@ configs:
       echo "host all all ::/0 md5"     >> "$$PGDATA/pg_hba.conf"
       pg_ctl -D "$$PGDATA" -m fast reload
 
-  spock-node-n1:
+  # Per-node setup: create the local spock node idempotently.
+  spock-node:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
-      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
-        -c "SELECT spock.node_create(node_name := 'n1', dsn := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge');"
 
-  spock-node-n2:
-    content: |-
-      #!/usr/bin/env bash
-      set -Eeo pipefail
-      psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "acctg" \
-        -c "SELECT spock.node_create(node_name := 'n2', dsn := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge');"
+      : "$${NODE_NAME:?NODE_NAME not set}"
+      DB="$${POSTGRES_DB:-example_db}"
+      USER="$${POSTGRES_USER:-pgedge}"
+      PASS="$${POSTGRES_PASSWORD:-pgedge}"
+      HOST="postgres-$${NODE_NAME}"
+      PORT="$${PGPORT:-5432}"
+
+      export PGPASSWORD="$${PASS}"
+
+      echo "[spock-node] Ensuring spock node '$${NODE_NAME}' exists (dsn host=$${HOST} port=$${PORT})..."
+      EXISTS=$$(psql -v ON_ERROR_STOP=0 --username "$${USER}" --dbname "$${DB}" -t -A \
+        -c "SELECT 1 FROM spock.node WHERE node_name = '$${NODE_NAME}' LIMIT 1;" || true)
+
+      if [ -z "$$EXISTS" ]; then
+        psql -v ON_ERROR_STOP=1 --username "$${USER}" --dbname "$${DB}" \
+          -c "SELECT spock.node_create(node_name := '$${NODE_NAME}', dsn := 'host=$${HOST} port=$${PORT} dbname=$${DB} user=$${USER} password=$${PASS}');"
+        echo "[spock-node] node '$${NODE_NAME}' created."
+      else
+        echo "[spock-node] node '$${NODE_NAME}' already present; skipping."
+      fi
+
+  # Wiring script: builds full-mesh subscriptions across all nodes in NODES.
   spock-wire-script:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
 
+      : "$${NODES:?NODES list is required, e.g. NODES='n1:postgres-n1:5432,n2:postgres-n2:5432'}"
       : "$${PGUSER:?PGUSER required}"
       : "$${PGPASSWORD:?PGPASSWORD required}"
       : "$${DBNAME:?DBNAME required}"
-      : "$${N1_HOST:?N1_HOST required}"
-      : "$${N2_HOST:?N2_HOST required}"
-      : "$${N1_PORT:?N1_PORT required}"
-      : "$${N2_PORT:?N2_PORT required}"
 
-      echo "[wire] Waiting for $$N1_HOST:$$N1_PORT..."
-      for i in {1..120}; do
-        if pg_isready -h "$$N1_HOST" -p "$$N1_PORT" -d "$$DBNAME" -U "$$PGUSER" >/dev/null 2>&1; then
-          echo "[wire] $$N1_HOST ready."
-          break
-        fi
-        sleep 2
-        [[ $$i -eq 120 ]] && { echo "[wire] Timeout waiting for $$N1_HOST"; exit 1; }
+      IFS=',' read -r -a NODE_ENTRIES <<< "$$NODES"
+
+      # Parse into arrays
+      NAMES=()
+      HOSTS=()
+      PORTS=()
+      for entry in "$${NODE_ENTRIES[@]}"; do
+        name="$${entry%%:*}"
+        rest="$${entry#*:}"
+        host="$${rest%%:*}"
+        port="$${rest##*:}"
+        NAMES+=("$$name"); HOSTS+=("$$host"); PORTS+=("$$port")
       done
 
-      echo "[wire] Waiting for $$N2_HOST:$$N2_PORT..."
-      for i in {1..120}; do
-        if pg_isready -h "$$N2_HOST" -p "$$N2_PORT" -d "$$DBNAME" -U "$$PGUSER" >/dev/null 2>&1; then
-          echo "[wire] $$N2_HOST ready."
-          break
-        fi
-        sleep 2
-        [[ $$i -eq 120 ]] && { echo "[wire] Timeout waiting for $$N2_HOST"; exit 1; }
+      psql_ok () {
+        local host="$$1" port="$$2" sql="$$3"
+        PGPASSWORD="$$PGPASSWORD" psql -h "$$host" -p "$$port" -U "$$PGUSER" -d "$$DBNAME" -t -A -v ON_ERROR_STOP=1 -c "$$sql" >/dev/null 2>&1
+      }
+
+      echo "[wire] Waiting for all nodes to be reachable..."
+      for i in "$${!NAMES[@]}"; do
+        h="$${HOSTS[$$i]}"; p="$${PORTS[$$i]}"
+        until psql_ok "$$h" "$$p" "select 1"; do
+          echo "[wire] waiting for $$h:$$p ..."
+          sleep 1
+        done
       done
 
-      echo "[wire] Ensuring subscription on n1 (sub_n1n2)..."
-      PGPASSWORD="$$PGPASSWORD" psql -h "$$N1_HOST" -p "$$N1_PORT" -U "$$PGUSER" -d "$$DBNAME" -v ON_ERROR_STOP=1 <<'SQL'
-      DO $$$$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name = 'sub_n1n2') THEN
-          PERFORM spock.sub_create(
-            subscription_name := 'sub_n1n2',
-            provider_dsn      := 'host=postgres-n2 port=5432 dbname=acctg user=pgedge password=pgedge'
-          );
-        END IF;
-      END$$$$;
-      SQL
+      echo "[wire] Waiting until each DB reports its own spock.node row..."
+      for i in "$${!NAMES[@]}"; do
+        n="$${NAMES[$$i]}"; h="$${HOSTS[$$i]}"; p="$${PORTS[$$i]}"
+        until PGPASSWORD="$$PGPASSWORD" psql -h "$$h" -p "$$p" -U "$$PGUSER" -d "$$DBNAME" -t -A -c "SELECT 1 FROM spock.node WHERE node_name='$$n' LIMIT 1;" | grep -q '^1$$'; do
+          echo "[wire] waiting for spock.node '$$n' on $$h:$$p ..."
+          sleep 1
+        done
+      done
 
-      echo "[wire] Ensuring subscription on n2 (sub_n2n1)..."
-      PGPASSWORD="$$PGPASSWORD" psql -h "$$N2_HOST" -p "$$N2_PORT" -U "$$PGUSER" -d "$$DBNAME" -v ON_ERROR_STOP=1 <<'SQL'
-      DO $$$$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name = 'sub_n2n1') THEN
-          PERFORM spock.sub_create(
-            subscription_name := 'sub_n2n1',
-            provider_dsn      := 'host=postgres-n1 port=5432 dbname=acctg user=pgedge password=pgedge'
-          );
-        END IF;
-      END$$$$;
-      SQL
+      echo "[wire] Creating full-mesh subscriptions (idempotent)..."
+      # For every ordered pair (A,B), A!=B, ensure sub_A_B exists pointing to B
+      for i in "$${!NAMES[@]}"; do
+        ai="$${NAMES[$$i]}"; ah="$${HOSTS[$$i]}"; ap="$${PORTS[$$i]}"
+        for j in "$${!NAMES[@]}"; do
+          [ "$$i" -eq "$$j" ] && continue
+          bj="$${NAMES[$$j]}"; bh="$${HOSTS[$$j]}"; bp="$${PORTS[$$j]}"
+          sub="sub_$${ai}_$${bj}"
+          echo "[wire] ensuring $$sub exists on $$ai -> $$bj ..."
+          # single-line SQL to avoid YAML/heredoc pitfalls
+          PGPASSWORD="$$PGPASSWORD" psql -h "$$ah" -p "$$ap" -U "$$PGUSER" -d "$$DBNAME" -v ON_ERROR_STOP=1 \
+            -c "SELECT spock.sub_create(subscription_name := '$$sub', provider_dsn := 'host=$$bh port=$$bp dbname=$$DBNAME user=$$PGUSER password=$$PGPASSWORD') WHERE NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name='$$sub');" \
+            >/dev/null
+        done
+      done
 
       echo "[wire] Wiring complete."
