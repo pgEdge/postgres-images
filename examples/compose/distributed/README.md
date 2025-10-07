@@ -1,8 +1,8 @@
-#pgEdge Distributed Postgres (2-node) — Quick Start
+# pgEdge Distributed Postgres (2-node) — Quick Start
 
 This example spins up two pgEdge containers (postgres-n1, postgres-n2) and configures logical replication between them using Spock. A database called acctg is created on both nodes and changes replicate bi-directionally.
 
-##Prerequisites
+## Prerequisites
 
 Docker & Docker Compose
 
@@ -10,7 +10,7 @@ Ports 6432 and 6433 free on your host
 Using this Docker File
 
 
-##Using this Docker File
+## Using this Docker File
 The docker-compose.yaml file in this repository creates a Postgres database named acctg that is replicated between two pgEdge nodes. Before running this file, ensure that you have an installed and running copy of docker with Internet access.
 
 Then, to deploy this example, use the command:
@@ -18,7 +18,7 @@ Then, to deploy this example, use the command:
 docker compose up -d
 ```
 
-##Connecting to acctg with psql
+## Connecting to acctg with psql
 You can interact with the database on each node of your two-node cluster with psql. For convenience, open two terminal windows, and use the following commands to connect to each node. To open a psql session on the first node, run:
 
 ```sh
@@ -30,7 +30,7 @@ Likewise, to open a `psql` session on the second node, run:
 docker compose exec postgres-n2 psql -U pgedge acctg
 ```
 
-##Exercising Replication
+## Exercising Replication
 To demonstrate that the nodes are replicating, you can confirm that a row is replicated from a table on one node to the same table on the other node.
 
 1. Create a table on the first node:
@@ -46,7 +46,7 @@ docker compose exec postgres-n2 psql -U pgedge acctg -c "insert into example (id
 docker compose exec postgres-n1 psql -U pgedge acctg -c "select * from example;"
 ```
 
-##Loading the Northwind Sample Dataset
+## Loading the Northwind Sample Dataset
 The Northwind sample dataset is a Postgres database dump that you can use to try replication with a more realistic database. To load the Northwind dataset into your pgEdge database, run:
 
 ```sh
@@ -59,7 +59,7 @@ Now, try querying one of the new tables from the other node:
 docker compose exec postgres-n2 psql -U pgedge acctg -c "select * from northwind.shippers"
 ```
 
-##Connecting to acctg from Another Client
+## Connecting to acctg from Another Client
 If you have psql, pgAdmin, or another Postgres client installed on your host machine, you can use these connection strings to connect to each node:
 
 First node: host=localhost port=6432 user=pgedge password=pgedge dbname=acctg
@@ -70,8 +70,7 @@ For example, using psql:
 psql 'host=localhost port=6432 user=pgedge password=pgedge dbname=acctg'
 ```
 
-# How to modify this example
-Modifying this Example
+## Modifying this Example
 Properties specified in a service's environment define the deployment details. You can adjust these settings to customize the deployment.
 
 ```sh
