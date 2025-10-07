@@ -62,8 +62,8 @@ docker compose exec postgres-n2 psql -U pgedge example_db -c "select * from nort
 ## Connecting to example_db from Another Client
 If you have psql, pgAdmin, or another Postgres client installed on your host machine, you can use these connection strings to connect to each node:
 
-First node: host=localhost port=6432 user=pgedge password=pgedge dbname=example_db
-Second node: host=localhost port=6433 user=pgedge password=pgedge dbname=example_db
+1. First node: host=localhost port=6432 user=pgedge password=pgedge dbname=example_db.
+2. Second node: host=localhost port=6433 user=pgedge password=pgedge dbname=example_db.
 For example, using psql:
 
 ```sh
