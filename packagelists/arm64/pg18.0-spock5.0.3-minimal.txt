@@ -1,0 +1,4 @@
+pgedge-postgresql18-18.0-1.el9
+pgedge-spock50_18-5.0.3-1.el9
+pgedge-snowflake_18-2.2-1.el9
+pgedge-lolor_18-1.2.1-1.el9
