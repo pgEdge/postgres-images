@@ -62,25 +62,21 @@ docker exec -it pgedge-postgres psql -U admin example_db
 
 This repository includes two Compose examples you can try out:
 
-- Enterprise Example
+- [Enterprise Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/enterprise)
 
 Runs a single Postgres instance using the standard image and initializes extensions.
 
 - `cd examples/compose/enterprise`
-- `docker compose up`
 
 This example utilizes the standard image and handles initializing and creating extensions.
 
-- Distributed Example
+- [Distributed Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/distributed)
 
 Runs two pgEdge Postgres nodes (n1 / n2) with Spock logical replication preconfigured.
 This example demonstrates bi-directional replication and includes instructions for testing with the Northwind dataset.
 Once Postgres initialization completes, you can connect to the database in a separate shell:
 
 - `cd examples/compose/distributed`
-- `docker compose up -d`
-
-
 
 ## Data Volumes
 
