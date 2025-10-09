@@ -1,6 +1,6 @@
 # pgEdge Postgres Images
 
-This repository provides build scripts for generating pgEdge Postgres container images supporting Postgres versions 16 and 17.
+This repository provides build scripts for generating pgEdge Postgres container images supporting Postgres versions 16, 17 and 18.
 
 Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image. 
 

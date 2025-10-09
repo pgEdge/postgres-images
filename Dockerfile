@@ -111,7 +111,7 @@ set -o nounset
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 dnf install -y python3-pip-21.3.1-1.el9
-pip install 'patroni[etcd,jsonlogger]==4.0.5'
+pip install 'patroni[etcd,jsonlogger]==4.1.0'
 dnf remove -y python3-pip
 dnf clean all
 

@@ -180,6 +180,13 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
+    *make_all_flavor_images(
+        postgres_version="18.0",
+        spock_version="5.0.3",
+        epoch=1,
+        is_latest_for_pg_major=True,
+        is_latest_for_spock_major=True,
+    ),
 ]
 
 
