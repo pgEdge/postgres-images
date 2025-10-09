@@ -34,6 +34,7 @@ This enterprise image automatically enables and installs the following extension
 - pgAudit
 - Snowflake
 - Spock
+- pgVector
 - PostGIS
 
 These are configured in two phases:
@@ -91,21 +92,19 @@ You can adjust environment variables in docker-compose.yaml to change default cr
 environment:
 
 - POSTGRES_USER: admin
+  - database superuser (default: admin).
 - POSTGRES_PASSWORD: password
+  - password for the superuser (default: password).
 - POSTGRES_DB: example_db
-
-POSTGRES_USER: database superuser (default: admin).
-
-POSTGRES_PASSWORD: password for the superuser (default: password).
-
-POSTGRES_DB: database name (default: example_db).
+  - database name (default: example_db).
 
 The published port can also be changed:
 
-ports:
-
-- target: 5432
-  published: 6432
+```yaml
+    ports:
+      - target: 5432
+        published: 6432
+```
 
 Change 6432 if you need to run multiple Postgres services on the same host.
 

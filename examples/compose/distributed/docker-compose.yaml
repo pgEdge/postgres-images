@@ -108,54 +108,65 @@ configs:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
+
       EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3")
+
       PGCONF="$$PGDATA/postgresql.conf"
+
       echo "Setting shared_preload_libraries to: $${EXTENSIONS[*]}"
+
       LIBS=$$(IFS=','; echo "$${EXTENSIONS[*]}")
+
       if grep -q '^[ ]*shared_preload_libraries' "$$PGCONF"; then
         sed -i "s|^[ ]*shared_preload_libraries.*|shared_preload_libraries = '$$LIBS'|" "$$PGCONF"
       else
         echo "shared_preload_libraries = '$$LIBS'" >> "$$PGCONF"
       fi
-
   configure-spock:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
-      PGCONF="$$PGDATA/postgresql.conf"
-      echo "Initializing Spock + logical replication configuration in postgresql.conf"
-      echo "listen_addresses = '*'"              >> "$$PGCONF"
-      echo "wal_level = 'logical'"              >> "$$PGCONF"
-      echo "max_worker_processes = 10"          >> "$$PGCONF"
-      echo "max_replication_slots = 10"         >> "$$PGCONF"
-      echo "max_wal_senders = 10"               >> "$$PGCONF"
-      echo "track_commit_timestamp = 'on'"      >> "$$PGCONF"
-      echo "spock.enable_ddl_replication = 'on'"       >> "$$PGCONF"
-      echo "spock.include_ddl_repset = 'on'"           >> "$$PGCONF"
-      echo "spock.allow_ddl_from_functions = 'on'"     >> "$$PGCONF"
-      echo "spock.conflict_resolution = 'last_update_wins'" >> "$$PGCONF"
-      echo "spock.save_resolutions = 'on'"             >> "$$PGCONF"
-      echo "spock.conflict_log_level = 'DEBUG'"        >> "$$PGCONF"
 
+      PGCONF="$$PGDATA/postgresql.conf"
+
+      echo "Initializing required spock configuration parameters in postgresql.conf"
+
+      # Allow connections from any address (for demo purposes)
+      echo "listen_addresses = '*'"              >> "$$PGCONF"
+
+      # Enable logical replication
+      echo "wal_level = 'logical'"                     >> "$$PGCONF"
+      echo "max_worker_processes = 10"                 >> "$$PGCONF"
+      echo "max_replication_slots = 10"                >> "$$PGCONF"
+      echo "max_wal_senders = 10"                      >> "$$PGCONF"
+      echo "track_commit_timestamp = 'on'"             >> "$$PGCONF"
+
+      # Set Spock parameters
+      echo "spock.enable_ddl_replication = 'on'"            >> "$$PGCONF"
+      echo "spock.include_ddl_repset = 'on'"                >> "$$PGCONF"
+      echo "spock.allow_ddl_from_functions = 'on'"          >> "$$PGCONF"
+      echo "spock.conflict_resolution = 'last_update_wins'" >> "$$PGCONF"
+      echo "spock.save_resolutions = 'on'"                  >> "$$PGCONF"
+      echo "spock.conflict_log_level = 'DEBUG'"             >> "$$PGCONF"
   restart-postgres:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
-      echo "Mid-sequence restart to apply base configuration..."
-      pg_ctl -D "$$PGDATA" -m fast restart
 
+      echo "Restarting PostgreSQL to apply configuration changes..."
+      pg_ctl -D "$$PGDATA" -m fast restart
   create-extensions:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
-      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis")
+
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "vector" "postgis")
+
       echo "Initializing extensions: $${EXTENSIONS[*]}"
       for EXT in "$${EXTENSIONS[@]}"; do
         echo "Creating extension: $$EXT"
-        psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" \
-          -c "CREATE EXTENSION IF NOT EXISTS \"$$EXT\";"
+        psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS \"$$EXT\";"
       done
-
   relax-pg-hba:
     content: |-
       #!/usr/bin/env bash
@@ -163,7 +174,6 @@ configs:
       echo "host all all 0.0.0.0/0 md5" >> "$$PGDATA/pg_hba.conf"
       echo "host all all ::/0 md5"     >> "$$PGDATA/pg_hba.conf"
       pg_ctl -D "$$PGDATA" -m fast reload
-
   # Per-node setup: also ensures the pgedge role exists; node_create uses pgedge in DSN.
   spock-node:
     content: |-
@@ -213,7 +223,6 @@ configs:
       else
         echo "[spock-node] node '$${NODE_NAME}' already present; skipping."
       fi
-
   # Wiring script: admin executes sub_create; provider_dsn uses replication user.
   spock-wire-script:
     content: |-
