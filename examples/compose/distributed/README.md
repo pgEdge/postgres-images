@@ -23,13 +23,13 @@ docker compose up -d
 You can interact with the database on each node of your two-node cluster with psql. For convenience, open two terminal windows, and use the following commands to connect to each node. To open a psql session on the first node, run:
 
 ```sh
-docker compose exec postgres-n1 psql -U pgedge example_db
+docker compose exec postgres-n1 psql -U admin example_db
 ```
 
 Likewise, to open a `psql` session on the second node, run:
 
 ```sh
-docker compose exec postgres-n2 psql -U pgedge example_db
+docker compose exec postgres-n2 psql -U admin example_db
 ```
 
 ## Exercising Replication
@@ -39,19 +39,19 @@ To demonstrate that the nodes are replicating, you can confirm that a row is rep
 1. Create a table on the first node:
 
 ```sh
-docker compose exec postgres-n1 psql -U pgedge example_db -c "create table example (id int primary key, data text);"
+docker compose exec postgres-n1 psql -U admin example_db -c "create table example (id int primary key, data text);"
 ```
 
 2. Insert a row into our new table on the second node:
 
 ```sh
-docker compose exec postgres-n2 psql -U pgedge example_db -c "insert into example (id, data) values (1, 'Hello, pgEdge!');"
+docker compose exec postgres-n2 psql -U admin example_db -c "insert into example (id, data) values (1, 'Hello, pgEdge!');"
 ```
 
 3. See that the new row has replicated back to the first node:
 
 ```sh
-docker compose exec postgres-n1 psql -U pgedge example_db -c "select * from example;"
+docker compose exec postgres-n1 psql -U admin example_db -c "select * from example;"
 ```
 
 ## Loading the Northwind Sample Dataset
@@ -59,13 +59,13 @@ docker compose exec postgres-n1 psql -U pgedge example_db -c "select * from exam
 The Northwind sample dataset is a Postgres database dump that you can use to try replication with a more realistic database. To load the Northwind dataset into your pgEdge database, run:
 
 ```sh
-curl https://downloads.pgedge.com/platform/examples/northwind/northwind.sql | docker compose exec -T postgres-n1 psql -U pgedge example_db
+curl https://downloads.pgedge.com/platform/examples/northwind/northwind.sql | docker compose exec -T postgres-n1 psql -U admin example_db
 ```
 
 Now, try querying one of the new tables from the other node:
 
 ```sh
-docker compose exec postgres-n2 psql -U pgedge example_db -c "select * from northwind.shippers"
+docker compose exec postgres-n2 psql -U admin example_db -c "select * from northwind.shippers"
 ```
 
 ## Connecting to example_db from Another Client
