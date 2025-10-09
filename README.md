@@ -67,7 +67,8 @@ This repository includes two Docker Compose examples you can try out:
   - This example runs a single Postgres instance using the standard image and initializes extensions.
 
 - [Distributed Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/distributed)
-  - This example demonstrates multi-master replication using spock
+
+  - This example runs two Postgres instances as pgEdge nodes (n1 / n2) with Spock logical replication pre-configured.
 
 ## Data Volumes
 
