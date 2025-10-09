@@ -72,13 +72,13 @@ docker compose exec postgres-n2 psql -U admin example_db -c "select * from north
 
 If you have psql, pgAdmin, or another Postgres client installed on your host machine, you can use these connection strings to connect to each node:
 
-1. First node: host=localhost port=6432 user=pgedge password=pgedge dbname=example_db.
-2. Second node: host=localhost port=6433 user=pgedge password=pgedge dbname=example_db.
+1. First node: host=localhost port=6432 user=admin password=password dbname=example_db.
+2. Second node: host=localhost port=6433 user=admin password=password dbname=example_db.
 
 For example, using psql:
 
 ```sh
-psql 'host=localhost port=6432 user=pgedge password=pgedge dbname=example_db'
+psql 'host=localhost port=6432 user=admin password=password dbname=example_db'
 ```
 
 ## Modifying this Example
@@ -88,18 +88,18 @@ Properties specified in a service's environment define the deployment details. Y
 ```sh
 environment:
       PGEDGE_USER: pgedge
-      PGEDGE_PASSWORD: pgedge
-      POSTGRES_USER: pgedge
-      POSTGRES_PASSWORD: pgedge
+      PGEDGE_PASSWORD: password
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
       POSTGRES_DB: example_db
       NODE_NAME: n1
 ```
 
-1. POSTGRES_USER is the name of the database superuser; the default is pgedge.
+1. POSTGRES_USER is the name of the database superuser; the default is admin.
 2. POSTGRES_PASSWORD is the password associated with the database superuser; the default is pgedge.
 3. POSTGRES_DB is the database name; the default is example_db.
 4. PGEDGE_USER is the name of the replication user; the default is pgedge.
-5. PGEDGE_PASSWORD is the password associated with the replication user; the default is pgedge.
+5. PGEDGE_PASSWORD is the password associated with the replication user; the default is password.
 6. NODE_NAME is the logical node name for the node; in our sample file, n1 and n2.
 
 The ports section describes the ports in use by the node:
@@ -119,7 +119,7 @@ spock-node-n1:
       #!/usr/bin/env bash
       set -Eeo pipefail
       psql -v ON_ERROR_STOP=1 --username "pgedge" --dbname "example_db" \
-        -c "SELECT spock.node_create(node_name := 'n1', dsn := 'host=postgres-n1 port=5432 dbname=example_db user=pgedge password=pgedge');"
+        -c "SELECT spock.node_create(node_name := 'n1', dsn := 'host=postgres-n1 port=5432 dbname=example_db user=pgedge password=password');"
 ```
 
 Note that this configuration only takes effect when the containers are first created. To recreate the database with a new configuration, stop the running example:
