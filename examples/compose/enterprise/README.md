@@ -107,7 +107,7 @@ ports:
 
 Change 6432 if you need to run multiple Postgres services on the same host.
 
-Recreating with a Fresh Configuration
+## Recreating with a Fresh Configuration
 
 This setup only applies during initial container creation. If you want to restart with a fresh database:
 ```sh
