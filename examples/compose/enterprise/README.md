@@ -4,11 +4,9 @@ This example spins up a single pgEdge Enterprise Postgres container with additio
 
 ## Prerequisites
 
-- Docker & Docker Compose installed
-
-- Port 6432 available on your host machine
-
-- Internet access to pull container images
+- Install Docker and Docker Compose on your host system.
+- Ensure that port 6432 is available on your host system.
+- Ensure that the host system has internet access to pull container images.
 
 ### Using this Docker File
 
@@ -22,22 +20,20 @@ docker compose up -d
 
 This will build and start the pgEdge Enterprise Postgres service.
 
-Connecting to example_db with psql
+#### Connecting to example_db with psql
 
+```shell
 docker compose exec pgedge-postgres psql -U admin example_db
+```
 
 ### Enterprise Extensions
 
 This enterprise image automatically enables and installs the following extensions:
 
 - pg_stat_statements
-
 - pgAudit
-
 - Snowflake
-
 - Spock
-
 - PostGIS
 
 These are configured in two phases:
@@ -63,7 +59,7 @@ This happens automatically during first startup. You don’t need to run this ma
 
 ### Loading Sample Data
 
-You can load the Northwind sample dataset into your enterprise Postgres instance by running:
+You can load the Northwind sample dataset into your Postgres database by running:
 ```sh
 curl https://downloads.pgedge.com/platform/examples/northwind/northwind.sql | docker compose exec -T pgedge-postgres psql -U admin example_db
 ```
@@ -107,7 +103,7 @@ ports:
 
 Change 6432 if you need to run multiple Postgres services on the same host.
 
-## Recreating with a Fresh Configuration
+## Recreating the container
 
 This setup only applies during initial container creation. If you want to restart with a fresh database:
 ```sh

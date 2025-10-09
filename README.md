@@ -2,13 +2,13 @@
 
 This repository provides build scripts for generating pgEdge Postgres container images supporting Postgres versions 16 and 17.
 
-Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image. 
+Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image.
 
 Images are published on the [pgEdge Github Container Registry](https://github.com/orgs/pgEdge/packages/container/package/pgedge-postgres).
 
 ## Image Flavors
 
-There are currently 2 supported image flavors: `minimal` and `standard`. 
+There are currently 2 supported image flavors: `minimal` and `standard`.
 
 Package lists contained under `packagelists` show the exact contents of each image version.
 
@@ -60,11 +60,14 @@ docker exec -it pgedge-postgres psql -U admin example_db
 
 ### docker compose
 
-This repository includes two Compose examples you can try out:
+This repository includes two Docker Compose examples you can try out:
 
 - [Enterprise Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/enterprise)
 
+  - This example runs a single Postgres instance using the standard image and initializes extensions.
+
 - [Distributed Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/distributed)
+  - This example demonstrates multi-master replication using spock
 
 ## Data Volumes
 
@@ -82,14 +85,14 @@ An example Docker compose spec that shows this looks like this:
 
 ```yaml
 pgedge-postgres:
-    image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard
-    restart: always
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-example_db}
-    volumes:
-      - data:/var/lib/pgsql
+  image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard
+  restart: always
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER:-admin}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    POSTGRES_DB: ${POSTGRES_DB:-example_db}
+  volumes:
+    - data:/var/lib/pgsql
 
 volumes:
   data:
