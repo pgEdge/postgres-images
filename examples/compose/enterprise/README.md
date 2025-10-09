@@ -72,7 +72,7 @@ Once loaded, verify with a query such as:
 ```sh
 docker compose exec pgedge-postgres psql -U admin example_db -c "select * from northwind.shippers;"
 ```
-Connecting from Outside the Container
+## Connecting from Outside the Container
 
 If you have psql, pgAdmin, or another Postgres client installed on your host machine, use this connection string:
 
@@ -83,7 +83,7 @@ For example, with psql:
 
 psql 'host=localhost port=6432 user=admin password=password dbname=example_db'
 
-Modifying this Example
+## Modifying this Example
 
 You can adjust environment variables in docker-compose.yaml to change default credentials and database name:
 
