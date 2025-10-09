@@ -1,4 +1,4 @@
-# pgEdge Distributed Postgres (2-node) — Quick Start
+# pgEdge Distributed Postgres  - Docker Compose Example
 
 This example spins up two pgEdge containers (postgres-n1, postgres-n2) and configures logical replication between them using Spock. A database called example_db is created on both nodes and changes replicate bi-directionally.
 
