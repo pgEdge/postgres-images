@@ -52,6 +52,9 @@ configs:
 
       echo "Initializing required spock configuration parameters in postgresql.conf"
 
+      # Allow connections from any address (for demo purposes)
+      echo "listen_addresses = '*'"              >> "$$PGCONF"
+      
       # Enable logical replication
       echo "wal_level = 'logical'"                     >> "$$PGCONF"
       echo "max_worker_processes = 10"                 >> "$$PGCONF"
@@ -78,7 +81,7 @@ configs:
       #!/usr/bin/env bash
       set -Eeo pipefail
 
-      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis")
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "vector" "postgis")
 
       echo "Initializing extensions: $${EXTENSIONS[*]}"
       for EXT in "$${EXTENSIONS[@]}"; do

@@ -2,13 +2,13 @@
 
 This repository provides build scripts for generating pgEdge Postgres container images supporting Postgres versions 16, 17 and 18.
 
-Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image. 
+Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image.
 
 Images are published on the [pgEdge Github Container Registry](https://github.com/orgs/pgEdge/packages/container/package/pgedge-postgres).
 
 ## Image Flavors
 
-There are currently 2 supported image flavors: `minimal` and `standard`. 
+There are currently 2 supported image flavors: `minimal` and `standard`.
 
 Package lists contained under `packagelists` show the exact contents of each image version.
 
@@ -60,18 +60,15 @@ docker exec -it pgedge-postgres psql -U admin example_db
 
 ### docker compose
 
-A `docker compose` example is located at [examples/compose/enterprise](examples/compose/enterprise).
+This repository includes two Docker Compose examples you can try out:
 
-To initialize it, go to that directory and run:
+- [Enterprise Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/enterprise)
 
-`docker compose up`
+  - This example runs a single Postgres instance using the standard image and initializes extensions.
 
-This example utilizes the standard image and handles initializing and creating extensions.
+- [Distributed Example](https://github.com/pgEdge/postgres-images/tree/Feature/PLAT-277/Add-a-pgedge-distributed-example-to-postgres-images/examples/compose/distributed)
 
-Once Postgres initialization completes, you can connect to the database in a separate shell:
-
-`docker compose exec pgedge-postgres psql -U admin example_db`
-
+  - This example runs two Postgres instances as pgEdge nodes (n1 / n2) with Spock logical replication pre-configured.
 
 ## Data Volumes
 
@@ -89,14 +86,14 @@ An example Docker compose spec that shows this looks like this:
 
 ```yaml
 pgedge-postgres:
-    image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard
-    restart: always
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-example_db}
-    volumes:
-      - data:/var/lib/pgsql
+  image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard
+  restart: always
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER:-admin}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    POSTGRES_DB: ${POSTGRES_DB:-example_db}
+  volumes:
+    - data:/var/lib/pgsql
 
 volumes:
   data:

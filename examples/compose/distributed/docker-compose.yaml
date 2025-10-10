@@ -1,0 +1,286 @@
+services:
+  postgres-n1:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: postgres-n1
+    restart: always
+    environment:
+      # Admin for initialization/configuration
+      POSTGRES_USER: ${ADMIN_USER:-admin}
+      POSTGRES_PASSWORD: ${ADMIN_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-example_db}
+      # Replication user (used in DSNs)
+      PGEDGE_USER: ${REPL_USER:-pgedge}
+      PGEDGE_PASSWORD: ${REPL_PASSWORD:-password}
+      NODE_NAME: n1
+    ports:
+      - target: 5432
+        published: 6432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    configs:
+      - source: init-extensions
+        target: /docker-entrypoint-initdb.d/10-init-extensions.sh
+        mode: 0755
+      - source: configure-spock
+        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+        mode: 0755
+      - source: restart-postgres
+        target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
+        mode: 0755
+      - source: create-extensions
+        target: /docker-entrypoint-initdb.d/40-create-extensions.sh
+        mode: 0755
+      - source: relax-pg-hba
+        target: /docker-entrypoint-initdb.d/50-relax-pg-hba.sh
+        mode: 0755
+      - source: spock-node
+        target: /docker-entrypoint-initdb.d/60-spock-node.sh
+        mode: 0755
+
+  postgres-n2:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: postgres-n2
+    restart: always
+    environment:
+      POSTGRES_USER: ${ADMIN_USER:-admin}
+      POSTGRES_PASSWORD: ${ADMIN_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-example_db}
+      PGEDGE_USER: ${REPL_USER:-pgedge}
+      PGEDGE_PASSWORD: ${REPL_PASSWORD:-password}
+      NODE_NAME: n2
+    ports:
+      - target: 5432
+        published: 6433
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    configs:
+      - source: init-extensions
+        target: /docker-entrypoint-initdb.d/10-init-extensions.sh
+        mode: 0755
+      - source: configure-spock
+        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+        mode: 0755
+      - source: restart-postgres
+        target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
+        mode: 0755
+      - source: create-extensions
+        target: /docker-entrypoint-initdb.d/40-create-extensions.sh
+        mode: 0755
+      - source: relax-pg-hba
+        target: /docker-entrypoint-initdb.d/50-relax-pg-hba.sh
+        mode: 0755
+      - source: spock-node
+        target: /docker-entrypoint-initdb.d/60-spock-node.sh
+        mode: 0755
+
+  # Full-mesh wiring job: executes sub_create as admin; provider DSNs use the pgedge user.
+  spock-wire:
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    container_name: spock-wire
+    depends_on:
+      postgres-n1:
+        condition: service_healthy
+      postgres-n2:
+        condition: service_healthy
+    environment:
+      PGADMIN_USER: ${ADMIN_USER:-admin}
+      PGADMIN_PASSWORD: ${ADMIN_PASSWORD:-password}
+      REPL_USER: ${REPL_USER:-pgedge}
+      REPL_PASSWORD: ${REPL_PASSWORD:-password}
+      DBNAME: ${POSTGRES_DB:-example_db}
+      # name:host:port entries (extend for more nodes)
+      NODES: "n1:postgres-n1:5432,n2:postgres-n2:5432"
+    command: ["/bin/bash", "/wire/run.sh"]
+    restart: "no"
+    configs:
+      - source: spock-wire-script
+        target: /wire/run.sh
+        mode: 0755
+
+configs:
+  init-extensions:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3")
+
+      PGCONF="$$PGDATA/postgresql.conf"
+
+      echo "Setting shared_preload_libraries to: $${EXTENSIONS[*]}"
+
+      LIBS=$$(IFS=','; echo "$${EXTENSIONS[*]}")
+
+      if grep -q '^[ ]*shared_preload_libraries' "$$PGCONF"; then
+        sed -i "s|^[ ]*shared_preload_libraries.*|shared_preload_libraries = '$$LIBS'|" "$$PGCONF"
+      else
+        echo "shared_preload_libraries = '$$LIBS'" >> "$$PGCONF"
+      fi
+  configure-spock:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      PGCONF="$$PGDATA/postgresql.conf"
+
+      echo "Initializing required spock configuration parameters in postgresql.conf"
+
+      # Allow connections from any address (for demo purposes)
+      echo "listen_addresses = '*'"              >> "$$PGCONF"
+
+      # Enable logical replication
+      echo "wal_level = 'logical'"                     >> "$$PGCONF"
+      echo "max_worker_processes = 10"                 >> "$$PGCONF"
+      echo "max_replication_slots = 10"                >> "$$PGCONF"
+      echo "max_wal_senders = 10"                      >> "$$PGCONF"
+      echo "track_commit_timestamp = 'on'"             >> "$$PGCONF"
+
+      # Set Spock parameters
+      echo "spock.enable_ddl_replication = 'on'"            >> "$$PGCONF"
+      echo "spock.include_ddl_repset = 'on'"                >> "$$PGCONF"
+      echo "spock.allow_ddl_from_functions = 'on'"          >> "$$PGCONF"
+      echo "spock.conflict_resolution = 'last_update_wins'" >> "$$PGCONF"
+      echo "spock.save_resolutions = 'on'"                  >> "$$PGCONF"
+      echo "spock.conflict_log_level = 'DEBUG'"             >> "$$PGCONF"
+  restart-postgres:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      echo "Restarting PostgreSQL to apply configuration changes..."
+      pg_ctl -D "$$PGDATA" -m fast restart
+  create-extensions:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "vector" "postgis")
+
+      echo "Initializing extensions: $${EXTENSIONS[*]}"
+      for EXT in "$${EXTENSIONS[@]}"; do
+        echo "Creating extension: $$EXT"
+        psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS \"$$EXT\";"
+      done
+  relax-pg-hba:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+      echo "host all all 0.0.0.0/0 md5" >> "$$PGDATA/pg_hba.conf"
+      echo "host all all ::/0 md5"     >> "$$PGDATA/pg_hba.conf"
+      pg_ctl -D "$$PGDATA" -m fast reload
+  # Per-node setup: also ensures the pgedge role exists; node_create uses pgedge in DSN.
+  spock-node:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      : "$${NODE_NAME:?NODE_NAME not set}"
+      DB="$${POSTGRES_DB:-example_db}"
+
+      # Admin executor (local)
+      ADMIN="$${POSTGRES_USER:-admin}"
+      ADMIN_PASS="$${POSTGRES_PASSWORD}"
+
+      # Replication user (used in DSNs)
+      REPL_USER="$${PGEDGE_USER:-pgedge}"
+      REPL_PASS="$${PGEDGE_PASSWORD:-password}"
+
+      HOST="postgres-$${NODE_NAME}"
+      PORT="$${PGPORT:-5432}"
+
+      export PGPASSWORD="$${ADMIN_PASS}"
+
+      echo "[spock-node] Ensuring replication role '$$REPL_USER' exists and is configured..."
+      EXISTS=$$(psql -tA -U "$$ADMIN" -d "$$DB" -c "SELECT 1 FROM pg_roles WHERE rolname = '$$REPL_USER' LIMIT 1;" || true)
+      if [ "$$EXISTS" != "1" ]; then
+        psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" \
+          -c "CREATE ROLE \"$$REPL_USER\" LOGIN REPLICATION PASSWORD '$$REPL_PASS';"
+      else
+        psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" \
+          -c "ALTER ROLE \"$$REPL_USER\" LOGIN REPLICATION PASSWORD '$$REPL_PASS';"
+      fi
+
+      # Practical privileges (safe to re-run)
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "GRANT pg_read_all_data  TO \"$$REPL_USER\";"
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "GRANT pg_write_all_data TO \"$$REPL_USER\";"
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "GRANT CREATE, TEMP ON DATABASE \"$$DB\" TO \"$$REPL_USER\";"
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES   TO \"$$REPL_USER\";"
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"$$REPL_USER\";"
+      psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO \"$$REPL_USER\";"
+
+      echo "[spock-node] Ensuring spock node '$${NODE_NAME}' exists (dsn uses '$${REPL_USER}')..."
+      NODE_EXISTS=$$(psql -tA -U "$$ADMIN" -d "$$DB" -c "SELECT 1 FROM spock.node WHERE node_name='$${NODE_NAME}' LIMIT 1;" || true)
+      if [ "$$NODE_EXISTS" != "1" ]; then
+        psql -v ON_ERROR_STOP=1 -U "$$ADMIN" -d "$$DB" \
+          -c "SELECT spock.node_create(node_name := '$${NODE_NAME}', dsn := 'host=$${HOST} port=$${PORT} dbname=$${DB} user=$${REPL_USER} password=$${REPL_PASS}');"
+        echo "[spock-node] node '$${NODE_NAME}' created."
+      else
+        echo "[spock-node] node '$${NODE_NAME}' already present; skipping."
+      fi
+  # Wiring script: admin executes sub_create; provider_dsn uses replication user.
+  spock-wire-script:
+    content: |-
+      #!/usr/bin/env bash
+      set -Eeo pipefail
+
+      : "$${NODES:?NODES list is required, e.g. NODES='n1:postgres-n1:5432,n2:postgres-n2:5432'}"
+      : "$${PGADMIN_USER:?PGADMIN_USER required}"
+      : "$${PGADMIN_PASSWORD:?PGADMIN_PASSWORD required}"
+      : "$${REPL_USER:?REPL_USER required}"
+      : "$${REPL_PASSWORD:?REPL_PASSWORD required}"
+      : "$${DBNAME:?DBNAME required}"
+
+      IFS=',' read -r -a NODE_ENTRIES <<< "$$NODES"
+      NAMES=(); HOSTS=(); PORTS=()
+      for entry in "$${NODE_ENTRIES[@]}"; do
+        name="$${entry%%:*}"
+        rest="$${entry#*:}"
+        host="$${rest%%:*}"
+        port="$${rest##*:}"
+        NAMES+=("$$name"); HOSTS+=("$$host"); PORTS+=("$$port")
+      done
+
+      psql_ok () {
+        local host="$$1" port="$$2" user="$$3" pass="$$4" sql="$$5"
+        PGPASSWORD="$$pass" psql -h "$$host" -p "$$port" -U "$$user" -d "$$DBNAME" -t -A -v ON_ERROR_STOP=1 -c "$$sql" >/dev/null 2>&1
+      }
+
+      echo "[wire] Waiting for all nodes (admin access)..."
+      for i in "$${!NAMES[@]}"; do
+        h="$${HOSTS[$$i]}"; p="$${PORTS[$$i]}"
+        until psql_ok "$$h" "$$p" "$$PGADMIN_USER" "$$PGADMIN_PASSWORD" "select 1"; do
+          echo "[wire] waiting for $$h:$$p ..."
+          sleep 1
+        done
+      done
+
+      echo "[wire] Waiting until each DB reports its own spock.node row..."
+      for i in "$${!NAMES[@]}"; do
+        n="$${NAMES[$$i]}"; h="$${HOSTS[$$i]}"; p="$${PORTS[$$i]}"
+        until PGPASSWORD="$$PGADMIN_PASSWORD" psql -h "$$h" -p "$$p" -U "$$PGADMIN_USER" -d "$$DBNAME" -t -A \
+          -c "SELECT 1 FROM spock.node WHERE node_name='$$n' LIMIT 1;" | grep -q '^1$$'; do
+          echo "[wire] waiting for spock.node '$$n' on $$h:$$p ..."
+          sleep 1
+        done
+      done
+
+      echo "[wire] Creating full-mesh subscriptions (idempotent; providers use '$$REPL_USER')..."
+      for i in "$${!NAMES[@]}"; do
+        ai="$${NAMES[$$i]}"; ah="$${HOSTS[$$i]}"; ap="$${PORTS[$$i]}"
+        for j in "$${!NAMES[@]}"; do
+          [ "$$i" -eq "$$j" ] && continue
+          bj="$${NAMES[$$j]}"; bh="$${HOSTS[$$j]}"; bp="$${PORTS[$$j]}"
+          sub="sub_$${ai}_$${bj}"
+          echo "[wire] ensuring $$sub exists on $$ai -> $$bj ..."
+          PGPASSWORD="$$PGADMIN_PASSWORD" psql -h "$$ah" -p "$$ap" -U "$$PGADMIN_USER" -d "$$DBNAME" -v ON_ERROR_STOP=1 \
+            -c "SELECT spock.sub_create(subscription_name := '$$sub', provider_dsn := 'host=$$bh port=$$bp dbname=$$DBNAME user=$$REPL_USER password=$$REPL_PASSWORD') WHERE NOT EXISTS (SELECT 1 FROM spock.subscription WHERE sub_name='$$sub');" \
+            >/dev/null
+        done
+      done
+      echo "[wire] Wiring complete."
