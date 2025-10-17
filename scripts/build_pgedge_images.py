@@ -160,29 +160,22 @@ all_images: list[PgEdgeImage] = [
     # pg16 images
     *make_all_flavor_images(
         postgres_version="16.10",
-        spock_version="5.0.1",
+        spock_version="5.0.4",
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 images
     *make_all_flavor_images(
-        postgres_version="17.5",
-        spock_version="5.0.1",
-        epoch=1,
-        is_latest_for_spock_major=True,
-        package_release_channel="staging",
-    ),
-    *make_all_flavor_images(
         postgres_version="17.6",
-        spock_version="5.0.1",
+        spock_version="5.0.4",
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     *make_all_flavor_images(
         postgres_version="18.0",
-        spock_version="5.0.3",
+        spock_version="5.0.4",
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
