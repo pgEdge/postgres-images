@@ -4,7 +4,7 @@
 
 variable "PACKAGE_RELEASE_CHANNEL" {
   type    = string
-  default = ""
+  default = "staging"
 }
 
 variable "POSTGRES_MAJOR_VERSION" {
