@@ -7,3 +7,10 @@ pgedge-postgis35_16-3.5.3-1.el9
 pgedge-pgvector_16-0.8.1-1.el9
 pgedge-pgbackrest-2.57.0-1.el9
 pgedge-python3-psycopg2-2.9.10-1.el9
+pgedge-pgmq_16-1.8.0-1.el9 (edited) 
+pgedge-pg_cron_16-1.6.7-1.el9
+pgedge-pg-tokenizer_16-0.1.1-1.el9
+pgedge-pg-vectorize_16- 0.23.0-1.el9
+pgedge-pg-stat-monitor_16-2.3.0-1.el9
+pgedge-vchord-bm25_16-0.2.2-1.el9
+pgedge-vectorizer_16-1.0-alpha4_1.el9
