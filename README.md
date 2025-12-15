@@ -24,9 +24,16 @@ Minimal images contain Postgres, and the following extensions:
 
 Standard images are based on minimal images, and contain additional extension and tools.
 
-- PGAudit
+- pgAudit
 - PostGIS
 - pgVector
+- pgEdge Vectorizer
+- pg_tokenizer
+- vchord_bm25
+- pg_vectorize
+- pgmq
+- pg_cron
+- pg_stat_monitor
 - Patroni
 - pgBackRest
 - psycopg2
