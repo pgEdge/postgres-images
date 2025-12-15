@@ -1,6 +1,6 @@
 # pgEdge Enterprise Postgres - Docker Compose Example
 
-This example spins up a single pgEdge Enterprise Postgres container with additional enterprise extensions enabled (pgAudit, PostGIS, Snowflake, Spock, etc.). The container is configured with logical replication support and initializes all extensions automatically at startup.
+This example spins up a single pgEdge Enterprise Postgres container with enterprise extensions enabled.
 
 ## Prerequisites
 
@@ -25,41 +25,6 @@ This will build and start the pgEdge Enterprise Postgres service.
 ```shell
 docker compose exec pgedge-postgres psql -U admin example_db
 ```
-
-### Enterprise Extensions
-
-This enterprise image automatically enables and installs the following extensions:
-
-- pg_stat_statements
-- pgAudit
-- Snowflake
-- Spock
-- pgVector
-- PostGIS
-
-These are configured in two phases:
-
-The init-extensions and configure-spock scripts update postgresql.conf with preload libraries and Spock settings.
-
-The create-extensions script runs CREATE EXTENSION commands to load them into your database.
-
-You can confirm extensions are installed by running:
-
-```sh
-\dx
-```
-
-inside your psql session.
-
-### Restarting PostgreSQL During Init
-
-To apply configuration changes, the initialization sequence includes a controlled restart of PostgreSQL:
-
-```sh
-pg_ctl -D $PGDATA -m fast restart
-```
-
-This happens automatically during first startup. You don’t need to run this manually unless you change configuration.
 
 ### Loading Sample Data
 

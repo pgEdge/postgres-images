@@ -12,6 +12,7 @@ services:
       PGEDGE_USER: ${REPL_USER:-pgedge}
       PGEDGE_PASSWORD: ${REPL_PASSWORD:-password}
       NODE_NAME: n1
+      NODE_ORDINAL: 1
     ports:
       - target: 5432
         published: 6432
@@ -24,8 +25,8 @@ services:
       - source: init-extensions
         target: /docker-entrypoint-initdb.d/10-init-extensions.sh
         mode: 0755
-      - source: configure-spock
-        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+      - source: init-pgconf
+        target: /docker-entrypoint-initdb.d/20-init-pgconf.sh
         mode: 0755
       - source: restart-postgres
         target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
@@ -51,6 +52,7 @@ services:
       PGEDGE_USER: ${REPL_USER:-pgedge}
       PGEDGE_PASSWORD: ${REPL_PASSWORD:-password}
       NODE_NAME: n2
+      NODE_ORDINAL: 2
     ports:
       - target: 5432
         published: 6433
@@ -63,8 +65,8 @@ services:
       - source: init-extensions
         target: /docker-entrypoint-initdb.d/10-init-extensions.sh
         mode: 0755
-      - source: configure-spock
-        target: /docker-entrypoint-initdb.d/20-configure-spock.sh
+      - source: init-pgconf
+        target: /docker-entrypoint-initdb.d/20-init-pgconf.sh
         mode: 0755
       - source: restart-postgres
         target: /docker-entrypoint-initdb.d/30-restart-postgres.sh
@@ -109,7 +111,7 @@ configs:
       #!/usr/bin/env bash
       set -Eeo pipefail
 
-      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3")
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3" "pg_stat_monitor" "pg_tokenizer" "pg_cron" "vectorize" "pgedge_vectorizer")
 
       PGCONF="$$PGDATA/postgresql.conf"
 
@@ -122,14 +124,14 @@ configs:
       else
         echo "shared_preload_libraries = '$$LIBS'" >> "$$PGCONF"
       fi
-  configure-spock:
+  init-pgconf:
     content: |-
       #!/usr/bin/env bash
       set -Eeo pipefail
 
       PGCONF="$$PGDATA/postgresql.conf"
 
-      echo "Initializing required spock configuration parameters in postgresql.conf"
+      echo "Initializing required configuration parameters in postgresql.conf"
 
       # Allow connections from any address (for demo purposes)
       echo "listen_addresses = '*'"              >> "$$PGCONF"
@@ -148,6 +150,13 @@ configs:
       echo "spock.conflict_resolution = 'last_update_wins'" >> "$$PGCONF"
       echo "spock.save_resolutions = 'on'"                  >> "$$PGCONF"
       echo "spock.conflict_log_level = 'DEBUG'"             >> "$$PGCONF"
+      
+      # Set LOLOR and Snowflake parameters
+      echo "lolor.node = '$${NODE_ORDINAL}'" >> "$$PGCONF"
+      echo "snowflake.node_id = '$${NODE_ORDINAL}'" >> "$$PGCONF"
+      
+      # Setup pg_cron
+      echo "cron.database_name = '$${POSTGRES_DB:-example_db}'" >> "$$PGCONF"
   restart-postgres:
     content: |-
       #!/usr/bin/env bash
@@ -160,7 +169,7 @@ configs:
       #!/usr/bin/env bash
       set -Eeo pipefail
 
-      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "vector" "postgis")
+      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "vector" "postgis" "lolor" "pgmq" "pg_cron" "pg_stat_monitor" "pg_tokenizer" "vectorize" "pgedge_vectorizer")
 
       echo "Initializing extensions: $${EXTENSIONS[*]}"
       for EXT in "$${EXTENSIONS[@]}"; do
