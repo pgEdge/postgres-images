@@ -13,4 +13,4 @@ pgedge-pg-tokenizer_18-0.1.1-1.el9
 pgedge-pg-vectorize_18-0.23.0-1.el9
 pgedge-pg-stat-monitor_18-2.3.0-1.el9
 pgedge-vchord-bm25_18-0.2.2-1.el9
-pgedge-vectorizer_18-1.0-alpha4_1.el9
+pgedge-vectorizer_18-1.0-beta1_1.el9
