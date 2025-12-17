@@ -1,6 +1,7 @@
 services:
   postgres-n1:
-    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:18-spock5-standard}
+    pull_policy: always
     container_name: postgres-n1
     restart: always
     environment:
@@ -42,7 +43,8 @@ services:
         mode: 0755
 
   postgres-n2:
-    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:17-spock5-standard}
+    image: ${POSTGRES_IMAGE:-ghcr.io/pgedge/pgedge-postgres:18-spock5-standard}
+    pull_policy: always
     container_name: postgres-n2
     restart: always
     environment:
