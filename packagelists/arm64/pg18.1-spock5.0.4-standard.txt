@@ -1,7 +1,7 @@
 pgedge-postgresql18-18.1-1.el9
 pgedge-spock50_18-5.0.4-1.el9
 pgedge-snowflake_18-2.4-1.el9
-pgedge-lolor_18-1.2.1-1.el9
+pgedge-lolor_18-1.2.2-1.el9
 pgedge-pgaudit_18-18.0-1.el9
 pgedge-postgis35_18-3.5.3-1.el9
 pgedge-pgvector_18-0.8.1-1.el9
