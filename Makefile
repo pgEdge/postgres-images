@@ -47,3 +47,24 @@ pgedge-images:
 	PGEDGE_IMAGE_ONLY_ARCH=$(PGEDGE_IMAGE_ONLY_ARCH) \
 	BUILDX_BUILDER=$(BUILDX_BUILDER) \
 	./scripts/build_pgedge_images.py
+
+# Test targets
+# IMAGE: The full image reference to test (e.g., ghcr.io/pgedge/pgedge-postgres:17-spock5-standard)
+# FLAVOR: The image flavor, either "minimal" or "standard" (required)
+#
+# Examples:
+#   make test-image IMAGE=ghcr.io/pgedge/pgedge-postgres:17-spock5-standard FLAVOR=standard
+#   make test-image IMAGE=127.0.0.1:5000/pgedge-postgres:17.7-spock5.0.4-minimal-3 FLAVOR=minimal
+IMAGE ?=
+FLAVOR ?=
+
+.PHONY: test-image
+test-image:
+ifndef IMAGE
+	$(error IMAGE is required. Usage: make test-image IMAGE=<image> FLAVOR=<minimal|standard>)
+endif
+ifndef FLAVOR
+	$(error FLAVOR is required. Usage: make test-image IMAGE=<image> FLAVOR=<minimal|standard>)
+endif
+	cd tests && go run main.go -image $(IMAGE) -flavor $(FLAVOR)
+
