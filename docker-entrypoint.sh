@@ -114,7 +114,41 @@ docker_init_database_dir() {
 	fi
 
 	# --pwfile refuses to handle a properly-empty file (hence the "\n"): https://github.com/docker-library/postgres/issues/1025
-	eval 'initdb --username="$POSTGRES_USER" --pwfile=<(printf "%s\n" "$POSTGRES_PASSWORD") '"$POSTGRES_INITDB_ARGS"' "$@"'
+	# Create a temporary password file to avoid command injection via POSTGRES_INITDB_ARGS
+	local pwfile
+	pwfile="$(mktemp)"
+	# Ensure cleanup on exit (including errors) to prevent password file from being left on disk
+	trap 'rm -f "$pwfile"' EXIT
+	printf '%s\n' "$POSTGRES_PASSWORD" > "$pwfile"
+	
+	# Build initdb command arguments safely using an array
+	local initdb_args=(
+		--username="$POSTGRES_USER"
+		--pwfile="$pwfile"
+	)
+	
+	# Safely parse POSTGRES_INITDB_ARGS if it exists
+	# Use read -a to split the string into an array without shell interpretation
+	# This prevents command injection while preserving argument structure
+	if [ -n "${POSTGRES_INITDB_ARGS:-}" ]; then
+		# Read the arguments into an array, splitting on whitespace
+		# Note: This does not handle quoted arguments with spaces.
+		# For complex cases, pass arguments as function parameters instead.
+		local args_array
+		IFS=' ' read -r -a args_array <<< "$POSTGRES_INITDB_ARGS"
+		initdb_args+=("${args_array[@]}")
+	fi
+	
+	# Add any function arguments (these are already safely parsed by the shell)
+	initdb_args+=("$@")
+	
+	# Execute initdb with the safely constructed arguments
+	initdb "${initdb_args[@]}"
+	
+	# Clean up temporary password file (trap will also handle this on exit, but explicit cleanup is good)
+	rm -f "$pwfile"
+	# Remove the trap since we've cleaned up manually
+	trap - EXIT
 
 	# unset/cleanup "nss_wrapper" bits
 	if [[ "${LD_PRELOAD:-}" == */libnss_wrapper.so ]]; then

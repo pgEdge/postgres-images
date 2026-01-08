@@ -1,25 +1,12 @@
-name: test-images
+name: PR Test Latest Images
 
-# This workflow can be triggered manually from any branch.
-# Select the branch in the GitHub Actions UI when triggering the workflow.
+# This workflow runs on pull requests and tests the latest images
+# from the internal repository to ensure they still work with any changes.
 
 on:
-  workflow_dispatch:
-    inputs:
-      package_repository:
-        description: "Package repository name (e.g., pgedge-postgres-internal, pgedge-postgres)"
-        type: string
-        default: "pgedge-postgres-internal"
-        required: false
-      tags:
-        description: "Comma-separated list of tags to test (e.g., 17-spock5-standard,17-spock5-minimal)"
-        type: string
-        required: true
-      architectures:
-        description: "Comma-separated list of architectures to test (x86,arm)"
-        type: string
-        default: "x86,arm"
-        required: false
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -27,26 +14,54 @@ permissions:
 
 env:
   IMAGE_REGISTRY: ghcr.io/pgedge
+  PACKAGE_REPOSITORY: pgedge-postgres-internal
 
 jobs:
-  # Parse inputs and generate the test matrix
+  # Get latest tags and generate test matrix
   setup:
+    # Skip for forked PRs since they won't have access to internal packages
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.generate.outputs.matrix }}
+      tags: ${{ steps.get-tags.outputs.tags }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Get latest tags
+        id: get-tags
+        run: |
+          set -e
+          TAGS=$(make latest-tags)
+          
+          # Validate that tags were retrieved successfully
+          if [ -z "$TAGS" ]; then
+            echo "Error: Failed to retrieve latest tags. make latest-tags returned empty output."
+            exit 1
+          fi
+          
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "Latest tags: $TAGS"
+
       - name: Generate test matrix
         id: generate
         run: |
-          # Parse tags
-          IFS=',' read -ra TAGS <<< "${{ inputs.tags }}"
+          # Parse tags from make output
+          TAGS="${{ steps.get-tags.outputs.tags }}"
+          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
           
-          # Parse architectures
-          IFS=',' read -ra ARCHS <<< "${{ inputs.architectures }}"
+          # Test on both architectures
+          ARCHS=("x86" "arm")
           
           # Build matrix JSON
           matrix_items=""
-          for tag in "${TAGS[@]}"; do
+          for tag in "${TAG_ARRAY[@]}"; do
             tag=$(echo "$tag" | xargs)  # trim whitespace
             
             # Determine flavor from tag
@@ -63,8 +78,6 @@ jobs:
               arch=$(echo "$arch" | xargs)  # trim whitespace
               
               # Map user-friendly arch names to runner names
-              # Accept "arm" or "arm64" -> use ubuntu-24.04-arm
-              # Accept "x86" or "amd64" -> use ubuntu-latest
               if [[ "$arch" == "arm" ]] || [[ "$arch" == "arm64" ]]; then
                 runner="ubuntu-24.04-arm"
                 arch_display="arm"
@@ -87,6 +100,8 @@ jobs:
           echo "Generated matrix: {\"include\":[$matrix_items]}"
 
   test:
+    # Skip for forked PRs since they won't have access to internal packages
+    if: github.event.pull_request.head.repo.full_name == github.repository
     needs: setup
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -104,27 +119,31 @@ jobs:
 
       - name: Pull image
         run: |
-          IMAGE="${{ env.IMAGE_REGISTRY }}/${{ inputs.package_repository }}:${{ matrix.tag }}"
+          IMAGE="${{ env.IMAGE_REGISTRY }}/${{ env.PACKAGE_REPOSITORY }}:${{ matrix.tag }}"
           echo "Pulling image: $IMAGE"
           docker pull "$IMAGE"
 
       - name: Run tests
         run: |
-          IMAGE="${{ env.IMAGE_REGISTRY }}/${{ inputs.package_repository }}:${{ matrix.tag }}"
+          IMAGE="${{ env.IMAGE_REGISTRY }}/${{ env.PACKAGE_REPOSITORY }}:${{ matrix.tag }}"
           make test-image IMAGE="$IMAGE" FLAVOR="${{ matrix.flavor }}"
 
   results:
+    # Skip for forked PRs since they won't have access to internal packages
+    # Also use always() to ensure results are shown even if test job fails
+    if: github.event.pull_request.head.repo.full_name == github.repository && always()
     needs: [setup, test]
     runs-on: ubuntu-latest
-    if: always()
     steps:
       - name: Output
         run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Input | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Package Repository | ${{ inputs.package_repository }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tags | ${{ inputs.tags }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Architectures | ${{ inputs.architectures }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package Repository | ${{ env.PACKAGE_REPOSITORY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tags | ${{ needs.setup.outputs.tags }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Architectures | x86,arm |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [[ "${{ needs.test.result }}" == "success" ]]; then
