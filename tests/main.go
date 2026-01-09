@@ -350,7 +350,11 @@ func (r *DefaultEntrypointRunner) waitForContainerCommand(
 		}
 		execResp.Close()
 
-		inspectResp, _ := r.cli.ContainerExecInspect(r.ctx, execID.ID)
+		inspectResp, err := r.cli.ContainerExecInspect(r.ctx, execID.ID)
+		if err != nil {
+			time.Sleep(interval)
+			continue
+		}
 		if inspectResp.ExitCode == 0 {
 			fmt.Printf("  %s\n", successMsg)
 			return nil
