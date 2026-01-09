@@ -67,4 +67,3 @@ ifndef FLAVOR
 	$(error FLAVOR is required. Usage: make test-image IMAGE=<image> FLAVOR=<minimal|standard>)
 endif
 	cd tests && go run main.go -image $(IMAGE) -flavor $(FLAVOR)
-
