@@ -1,5 +1,7 @@
 # pgEdge Postgres Images
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/pgEdge/postgres-images?utm_source=oss&utm_medium=github&utm_campaign=pgEdge%2Fpostgres-images&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 This repository provides build scripts for generating pgEdge Postgres container images supporting Postgres versions 16, 17 and 18.
 
 Images are built from pgEdge Enterprise Postgres packages using a rockylinux9-ubi base image.
