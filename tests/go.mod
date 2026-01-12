@@ -1,8 +1,6 @@
 module github.com/pgedge/postgres-images/tests
 
-go 1.24.0
-
-toolchain go1.24.11
+go 1.24.11
 
 require github.com/docker/docker v28.0.0+incompatible
 

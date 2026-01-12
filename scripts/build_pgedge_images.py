@@ -17,6 +17,7 @@ class Config:
     only_postgres_version: str
     only_spock_version: str
     only_arch: str
+    list_latest_tags: bool
 
     @staticmethod
     def from_env() -> "Config":
@@ -29,6 +30,7 @@ class Config:
             only_postgres_version=os.getenv("PGEDGE_IMAGE_ONLY_POSTGRES_VERSION", ""),
             only_spock_version=os.getenv("PGEDGE_IMAGE_ONLY_SPOCK_VERSION", ""),
             only_arch=os.getenv("PGEDGE_IMAGE_ONLY_ARCH", ""),
+            list_latest_tags=(os.getenv("PGEDGE_LIST_LATEST_TAGS", "0") == "1"),
         )
 
 
@@ -324,6 +326,13 @@ def main():
 
     config = Config.from_env()
 
+    # If list_latest_tags is enabled, output tags and exit
+    if config.list_latest_tags:
+        tags = get_latest_tags()
+        # Output as comma-separated list
+        print(",".join(tags))
+        return
+
     if config.dry_run:
         logging.info("dry run enabled. build and publish actions will be skipped.")
 
@@ -395,6 +404,20 @@ def main():
                 )
             else:
                 logging.info(f"{tag} is already up-to-date")
+
+
+def get_latest_tags() -> list[str]:
+    """
+    Returns a list of the latest immutable tags (with epoch and pg minor version)
+    for all images that are marked as latest for their Postgres major version.
+    Returns tags in the format: {postgres_version}-spock{spock_version}-{flavor}-{epoch}
+    """
+    latest_tags = []
+    for image in all_images:
+        if image.is_latest_for_pg_major:
+            # Get the immutable build tag with epoch and full postgres version
+            latest_tags.append(str(image.build_tag))
+    return latest_tags
 
 
 if __name__ == "__main__":

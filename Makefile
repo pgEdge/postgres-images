@@ -68,3 +68,6 @@ ifndef FLAVOR
 endif
 	cd tests && go run main.go -image $(IMAGE) -flavor $(FLAVOR)
 
+.PHONY: latest-tags
+latest-tags:
+	@PGEDGE_LIST_LATEST_TAGS=1 ./scripts/build_pgedge_images.py

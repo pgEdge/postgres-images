@@ -112,3 +112,60 @@ volumes:
 - Mutable tags also exist for:
   - The latest image for a given Postgres major.minor + spock major version, `pg<postgres major.minor>-spock<major>-<flavor>` , e.g. `17.6-spock5-standard`
   - The latest image for a given Postgres major + spock major version, `pg<postgres major>-spock<major>-<flavor>`, e.g. `17-spock5-standard`
+
+## Testing
+
+This repository includes a comprehensive test suite to validate Postgres images. The tests verify:
+- Default entrypoint functionality
+- Patroni entrypoint (standard images only)
+- PostgreSQL connectivity and version checks
+- Extension availability and functionality (Spock, LOLOR, Snowflake, pgvector, PostGIS, pgaudit)
+- pgBackRest installation (standard images only)
+
+### Running Tests Locally
+
+To run tests locally, you'll need:
+- Go 1.24.11 or later
+- Docker installed and running
+- Access to pull the image you want to test
+
+Run the test suite using the Makefile:
+
+```bash
+make test-image IMAGE=<image> FLAVOR=<minimal|standard>
+```
+
+Example:
+
+```bash
+make test-image IMAGE=ghcr.io/pgedge/pgedge-postgres:17-spock5-standard FLAVOR=standard
+```
+
+Or run directly with Go:
+
+```bash
+cd tests && go run main.go -image <image> -flavor <minimal|standard>
+```
+
+### Local Testing Limitations
+
+**Architecture Limitations:** When running tests locally, you can only test images that match your local machine's architecture. For example:
+- On an x86_64/amd64 machine, you can only test amd64 images
+- On an ARM64 machine, you can only test arm64 images
+
+To test images for multiple architectures, use the GitHub Actions workflow which runs tests on architecture-specific runners:
+- `ubuntu-latest` runner (amd64/x86_64 architecture)
+- `ubuntu-24.04-arm` runner (arm64 architecture)
+
+### CI/CD Testing
+
+The GitHub Actions workflow (`.github/workflows/test_images.yaml`) can be triggered manually to test images across multiple architectures. The workflow uses specific runner labels to target CPU architectures:
+- **amd64/x86_64**: Uses `ubuntu-latest` runner
+- **arm64**: Uses `ubuntu-24.04-arm` runner
+
+The workflow accepts:
+- **Package Repository**: The container registry repository name
+- **Tags**: Comma-separated list of image tags to test
+- **Architectures**: Comma-separated list of architectures (`x86,arm` or `amd64,arm64`)
+
+The workflow will automatically test each tag on each specified architecture by mapping the architecture names to the appropriate runner labels.
