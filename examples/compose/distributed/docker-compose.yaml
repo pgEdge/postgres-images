@@ -202,7 +202,7 @@ configs:
       REPL_USER="$${PGEDGE_USER:-pgedge}"
       REPL_PASS="$${PGEDGE_PASSWORD:-password}"
 
-      HOST="postgres-$${NODE_NAME}"
+      HOST="$${NODE_NAME}"
       PORT="$${PGPORT:-5432}"
 
       export PGPASSWORD="$${ADMIN_PASS}"
