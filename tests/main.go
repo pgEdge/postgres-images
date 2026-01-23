@@ -709,6 +709,26 @@ func getCommonExtensionTests() []Test {
 func getStandardOnlyTests() []Test {
 	return []Test{
 		{
+			Name:           "system_stats extension can be created",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS system_stats; SELECT 1;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:         "system_stats pg_sys_os_info works",
+			StandardOnly: true,
+			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT 1 FROM pg_sys_os_info();\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "1" {
+					return fmt.Errorf("unexpected output: %s (expected 1)", output)
+				}
+				return nil
+			},
+		},
+		{
 			Name:           "pgvector extension can be created",
 			StandardOnly:   true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS vector; SELECT 1;\"",
