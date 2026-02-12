@@ -54,7 +54,7 @@ pgedge-images:
 #
 # Examples:
 #   make test-image IMAGE=ghcr.io/pgedge/pgedge-postgres:17-spock5-standard FLAVOR=standard
-#   make test-image IMAGE=127.0.0.1:5000/pgedge-postgres:17.7-spock5.0.4-minimal-3 FLAVOR=minimal
+#   make test-image IMAGE=127.0.0.1:5000/pgedge-postgres:17.8-spock5.0.5-minimal-1 FLAVOR=minimal
 IMAGE ?=
 FLAVOR ?=
 
