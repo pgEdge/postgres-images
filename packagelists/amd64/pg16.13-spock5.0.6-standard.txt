@@ -1,5 +1,5 @@
 pgedge-postgresql16-16.13-1.el9
-pgedge-spock50_16-5.0.5-1.el9
+pgedge-spock50_16-5.0.6-1.el9
 pgedge-snowflake_16-2.4-1.el9
 pgedge-lolor_16-1.2.2-1.el9
 pgedge-pgaudit_16-16.1-1.el9
@@ -13,5 +13,5 @@ pgedge-pg-tokenizer_16-0.1.1-1.el9
 pgedge-pg-vectorize_16-0.23.0-1.el9
 pgedge-pg-stat-monitor_16-2.3.0-1.el9
 pgedge-vchord-bm25_16-0.2.2-1.el9
-pgedge-vectorizer_16-1.0-beta2_1.el9
+pgedge-vectorizer_16-1.0-1.el9
 pgedge-system_stats_16-3.2.1-1.el9
