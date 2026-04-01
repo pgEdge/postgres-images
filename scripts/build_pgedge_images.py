@@ -255,7 +255,7 @@ def build(
         bake_args.extend(("--set", f"default.platforms=linux/{only_arch}"))
 
     subprocess.check_output(
-        bake_cmd("--push"),
+        bake_cmd(*bake_args),
         env={
             **os.environ.copy(),
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
@@ -309,7 +309,7 @@ def _log_config(config: "Config") -> None:
     if config.only_spock_version:
         logging.info(f"only spock {config.only_spock_version} enabled. other images will be skipped.")
     if config.only_arch:
-        logging.info(f"only arch {config.only_arch} enabled. other images will be skipped.")
+        logging.info(f"only arch {config.only_arch} enabled. builds will target linux/{config.only_arch} only.")
 
 
 def _should_skip_image(image: "PgEdgeImage", config: "Config") -> bool:
