@@ -297,6 +297,49 @@ def add_tag(repo: str, existing_tag: Tag, new_tag: Tag, dry_run: bool):
     )
 
 
+def _log_config(config: "Config") -> None:
+    if config.dry_run:
+        logging.info("dry run enabled. build and publish actions will be skipped.")
+    if config.republish:
+        logging.info("republish enabled. images will be republished.")
+    if config.no_cache:
+        logging.info("no cache enabled. images will be built without cache.")
+    if config.only_postgres_version:
+        logging.info(f"only postgres {config.only_postgres_version} enabled. other images will be skipped.")
+    if config.only_spock_version:
+        logging.info(f"only spock {config.only_spock_version} enabled. other images will be skipped.")
+    if config.only_arch:
+        logging.info(f"only arch {config.only_arch} enabled. other images will be skipped.")
+
+
+def _should_skip_image(image: "PgEdgeImage", config: "Config") -> bool:
+    if config.only_postgres_version and image.postgres_version != config.only_postgres_version:
+        return True
+    if config.only_spock_version and image.spock_version != config.only_spock_version:
+        return True
+    return False
+
+
+def _process_extra_tags(config: "Config", image: "PgEdgeImage", published: set) -> None:
+    for tag in image.extra_tags:
+        tag_published = published_digests(config.repo, tag)
+        if len(tag_published) == 0 or not tag_published.issubset(published) or config.republish:
+            add_tag(repo=config.repo, existing_tag=image.build_tag, new_tag=tag, dry_run=config.dry_run)
+        else:
+            logging.info(f"{tag} is already up-to-date")
+
+
+def _process_image(config: "Config", image: "PgEdgeImage") -> None:
+    published = published_digests(config.repo, image.build_tag)
+    if len(published) == 0 or config.republish:
+        build(repo=config.repo, image=image, dry_run=config.dry_run, no_cache=config.no_cache, only_arch=config.only_arch)
+        digest = index_digest(config.repo, image.build_tag)
+        sign(repo=config.repo, digest=digest, dry_run=config.dry_run)
+    else:
+        logging.info(f"{image.build_tag} is already published")
+    _process_extra_tags(config, image, published)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -305,84 +348,18 @@ def main():
 
     config = Config.from_env()
 
-    # If list_latest_tags is enabled, output tags and exit
     if config.list_latest_tags:
-        tags = get_latest_tags()
-        # Output as comma-separated list
-        print(",".join(tags))
+        print(",".join(get_latest_tags()))
         return
 
-    if config.dry_run:
-        logging.info("dry run enabled. build and publish actions will be skipped.")
-
-    if config.republish:
-        logging.info("republish enabled. images will be republished.")
-
-    if config.no_cache:
-        logging.info("no cache enabled. images will be built without cache.")
-
-    if config.only_postgres_version:
-        logging.info(
-            f"only postgres {config.only_postgres_version} enabled. other images will be skipped."
-        )
-
-    if config.only_spock_version:
-        logging.info(
-            f"only spock {config.only_spock_version} enabled. other images will be skipped."
-        )
-
-    if config.only_arch:
-        logging.info(
-            f"only arch {config.only_arch} enabled. other images will be skipped."
-        )
-
+    _log_config(config)
     validate_images(all_images)
 
     for image in all_images:
-        if (
-            config.only_postgres_version
-            and image.postgres_version != config.only_postgres_version
-        ) or (
-            config.only_spock_version
-            and image.spock_version != config.only_spock_version
-        ):
+        if _should_skip_image(image, config):
             logging.info(f"skipping image {image.build_tag}")
             continue
-
-        published = published_digests(config.repo, image.build_tag)
-        if len(published) == 0 or config.republish:
-            build(
-                repo=config.repo,
-                image=image,
-                dry_run=config.dry_run,
-                no_cache=config.no_cache,
-                only_arch=config.only_arch,
-            )
-            
-            id = index_digest(config.repo, image.build_tag)
-            sign(
-                repo=config.repo,
-                digest=id,
-                dry_run=config.dry_run,
-            )
-        else:
-            logging.info(f"{image.build_tag} is already published")
-
-        for tag in image.extra_tags:
-            tag_published = published_digests(config.repo, tag)
-            if (
-                len(tag_published) == 0
-                or not tag_published.issubset(published)
-                or config.republish
-            ):
-                add_tag(
-                    repo=config.repo,
-                    existing_tag=image.build_tag,
-                    new_tag=tag,
-                    dry_run=config.dry_run,
-                )
-            else:
-                logging.info(f"{tag} is already up-to-date")
+        _process_image(config, image)
 
 
 def get_latest_tags() -> list[str]:
