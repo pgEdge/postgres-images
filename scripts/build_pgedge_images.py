@@ -252,7 +252,7 @@ def build(
     if no_cache:
         bake_args.append("--no-cache")
     if only_arch:
-        bake_args.extend(("--set", f"default.platforms=linux/{only_arch}"))
+        bake_args.extend(("--set", f"default.platform=linux/{only_arch}"))
 
     subprocess.check_output(
         bake_cmd(*bake_args),
