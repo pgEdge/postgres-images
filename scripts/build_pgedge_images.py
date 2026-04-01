@@ -333,8 +333,12 @@ def _process_image(config: "Config", image: "PgEdgeImage") -> None:
     published = published_digests(config.repo, image.build_tag)
     if len(published) == 0 or config.republish:
         build(repo=config.repo, image=image, dry_run=config.dry_run, no_cache=config.no_cache, only_arch=config.only_arch)
-        digest = index_digest(config.repo, image.build_tag)
-        sign(repo=config.repo, digest=digest, dry_run=config.dry_run)
+        if not config.dry_run:
+            digest = index_digest(config.repo, image.build_tag)
+            sign(repo=config.repo, digest=digest, dry_run=config.dry_run)
+            published = published_digests(config.repo, image.build_tag)
+        else:
+            logging.info("dry run enabled; skipping digest lookup and signing")
     else:
         logging.info(f"{image.build_tag} is already published")
     _process_extra_tags(config, image, published)
