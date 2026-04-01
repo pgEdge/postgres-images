@@ -541,7 +541,7 @@ func parseCommand(cmd string) []string {
 	}
 	p.flush()
 	if len(p.args) == 0 {
-		return []string{cmd}
+		return nil
 	}
 	return p.args
 }
@@ -559,6 +559,9 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 	// Parse command string safely to avoid command injection
 	// This prevents shell interpretation of the command string
 	cmdArgs := parseCommand(cmd)
+	if len(cmdArgs) == 0 {
+		return -1, "", fmt.Errorf("empty command")
+	}
 
 	execID, err := r.cli.ContainerExecCreate(r.ctx, r.containerID, container.ExecOptions{
 		Cmd:          cmdArgs,
