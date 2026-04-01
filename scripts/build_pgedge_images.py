@@ -323,7 +323,7 @@ def _should_skip_image(image: "PgEdgeImage", config: "Config") -> bool:
 def _process_extra_tags(config: "Config", image: "PgEdgeImage", published: set) -> None:
     for tag in image.extra_tags:
         tag_published = published_digests(config.repo, tag)
-        if len(tag_published) == 0 or not tag_published.issubset(published) or config.republish:
+        if config.republish or tag_published != published:
             add_tag(repo=config.repo, existing_tag=image.build_tag, new_tag=tag, dry_run=config.dry_run)
         else:
             logging.info(f"{tag} is already up-to-date")
