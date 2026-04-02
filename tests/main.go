@@ -493,43 +493,57 @@ func (r *TestRunner) Cleanup() {
 	}
 }
 
-// parseCommand safely parses a command string into command and arguments
-// This prevents command injection by avoiding shell interpretation
-func parseCommand(cmd string) []string {
-	// Simple parser that splits on spaces while respecting single and double quotes
-	// This is safe for the hardcoded commands we use in tests
-	var args []string
-	var current strings.Builder
-	inSingleQuote := false
-	inDoubleQuote := false
+type commandParser struct {
+	args          []string
+	current       strings.Builder
+	inSingleQuote bool
+	inDoubleQuote bool
+}
 
-	for _, char := range cmd {
-		switch {
-		case char == '\'' && !inDoubleQuote:
-			inSingleQuote = !inSingleQuote
-		case char == '"' && !inSingleQuote:
-			inDoubleQuote = !inDoubleQuote
-		case char == ' ' && !inSingleQuote && !inDoubleQuote:
-			if current.Len() > 0 {
-				args = append(args, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteRune(char)
+func (p *commandParser) flush() {
+	if p.current.Len() > 0 {
+		p.args = append(p.args, p.current.String())
+		p.current.Reset()
+	}
+}
+
+func (p *commandParser) processChar(char rune) {
+	switch char {
+	case '\'':
+		if !p.inDoubleQuote {
+			p.inSingleQuote = !p.inSingleQuote
+		} else {
+			p.current.WriteRune(char)
 		}
+	case '"':
+		if !p.inSingleQuote {
+			p.inDoubleQuote = !p.inDoubleQuote
+		} else {
+			p.current.WriteRune(char)
+		}
+	case ' ':
+		if p.inSingleQuote || p.inDoubleQuote {
+			p.current.WriteRune(char)
+		} else {
+			p.flush()
+		}
+	default:
+		p.current.WriteRune(char)
 	}
+}
 
-	// Add any remaining content after the loop
-	if current.Len() > 0 {
-		args = append(args, current.String())
+// parseCommand safely parses a command string into command and arguments.
+// This prevents command injection by avoiding shell interpretation.
+func parseCommand(cmd string) []string {
+	p := &commandParser{}
+	for _, char := range cmd {
+		p.processChar(char)
 	}
-
-	// If no arguments were parsed, return the original command as a single argument
-	if len(args) == 0 {
-		return []string{cmd}
+	p.flush()
+	if len(p.args) == 0 {
+		return nil
 	}
-
-	return args
+	return p.args
 }
 
 func (r *TestRunner) exec(cmd string) (int, string, error) {
@@ -545,6 +559,9 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 	// Parse command string safely to avoid command injection
 	// This prevents shell interpretation of the command string
 	cmdArgs := parseCommand(cmd)
+	if len(cmdArgs) == 0 {
+		return -1, "", fmt.Errorf("empty command")
+	}
 
 	execID, err := r.cli.ContainerExecCreate(r.ctx, r.containerID, container.ExecOptions{
 		Cmd:          cmdArgs,
@@ -707,6 +724,10 @@ func getCommonExtensionTests() []Test {
 }
 
 func getStandardOnlyTests() []Test {
+	return append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
+}
+
+func getSystemStatsAndVectorTests() []Test {
 	return []Test{
 		{
 			Name:           "system_stats extension can be created",
@@ -748,6 +769,11 @@ func getStandardOnlyTests() []Test {
 				return nil
 			},
 		},
+	}
+}
+
+func getPostGISAuditBackrestTests() []Test {
+	return []Test{
 		{
 			Name:           "PostGIS extension can be created",
 			StandardOnly:   true,

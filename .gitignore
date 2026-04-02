@@ -2,3 +2,9 @@
 .vscode
 .DS_Store
 
+# Python
+__pycache__/
+
+# Go binaries
+tests/tests
+
