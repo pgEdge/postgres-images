@@ -161,27 +161,30 @@ def make_all_flavor_images(
 all_images: list[PgEdgeImage] = [
     # pg16 images
     *make_all_flavor_images(
-        postgres_version="16.13",
-        spock_version="5.0.6",
-        epoch=2,
+        postgres_version="16.14",
+        spock_version="5.0.8",
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        package_release_channel="staging",
     ),
     # pg17 images
     *make_all_flavor_images(
-        postgres_version="17.9",
-        spock_version="5.0.6",
-        epoch=2,
+        postgres_version="17.10",
+        spock_version="5.0.8",
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        package_release_channel="staging",
     ),
     # pg18 images
     *make_all_flavor_images(
-        postgres_version="18.3",
-        spock_version="5.0.6",
-        epoch=2,
+        postgres_version="18.4",
+        spock_version="5.0.8",
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        package_release_channel="staging",
     ),
 ]
 
