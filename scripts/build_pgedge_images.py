@@ -166,7 +166,6 @@ all_images: list[PgEdgeImage] = [
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        package_release_channel="staging",
     ),
     # pg17 images
     *make_all_flavor_images(
@@ -175,7 +174,6 @@ all_images: list[PgEdgeImage] = [
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        package_release_channel="staging",
     ),
     # pg18 images
     *make_all_flavor_images(
@@ -184,7 +182,6 @@ all_images: list[PgEdgeImage] = [
         epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        package_release_channel="staging",
     ),
 ]
 
