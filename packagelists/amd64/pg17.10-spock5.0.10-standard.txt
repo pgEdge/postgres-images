@@ -15,3 +15,4 @@ pgedge-pg-stat-monitor_17-2.3.0-1.el9
 pgedge-vchord-bm25_17-0.2.2-1.el9
 pgedge-vectorizer_17-1.0-1.el9
 pgedge-system_stats_17-3.2.1-1.el9
+pgedge-supautils_17-3.2.2-1.el9
