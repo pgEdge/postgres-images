@@ -377,7 +377,7 @@ func (r *TestRunner) Start() error {
 	// Note: We only include extensions that are guaranteed to be in all images
 	sharedLibs := "spock,snowflake"
 	if r.flavor == "standard" {
-		sharedLibs = "spock,snowflake,pgaudit"
+		sharedLibs = "spock,snowflake,pgaudit,supautils"
 	}
 
 	// Build postgres command with required configuration
@@ -724,7 +724,41 @@ func getCommonExtensionTests() []Test {
 }
 
 func getStandardOnlyTests() []Test {
-	return append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
+	tests := append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
+	return append(tests, getSupautilsTests()...)
+}
+
+func getSupautilsTests() []Test {
+	return []Test{
+		{
+			// supautils is a shared_preload_libraries-only module (no CREATE EXTENSION,
+			// no SQL functions/views). Its only SQL-visible evidence of a successful
+			// load is the GUCs it registers in _PG_init, so we assert those exist in
+			// pg_settings. This query never raises, returning 't' only when the
+			// library was actually preloaded and initialized.
+			Name:         "supautils is preloaded",
+			StandardOnly: true,
+			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT EXISTS (SELECT 1 FROM pg_settings WHERE name LIKE 'supautils.%');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "t" {
+					return fmt.Errorf("unexpected output: %s (expected 't')", output)
+				}
+				return nil
+			},
+		},
+		{
+			// A registered GUC is readable via SHOW. If supautils were not loaded this
+			// errors with 'unrecognized configuration parameter', so a clean exit
+			// confirms the library registered its settings.
+			Name:           "supautils GUC is accessible",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"SHOW supautils.reserved_roles;\"",
+			ExpectedOutput: expectSuccess,
+		},
+	}
 }
 
 func getSystemStatsAndVectorTests() []Test {
