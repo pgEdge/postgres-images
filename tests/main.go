@@ -49,6 +49,11 @@ type DefaultEntrypointRunner struct {
 func main() {
 	image, flavor := parseFlags()
 
+	// Derive the expected spock major version from the image tag (e.g.
+	// "...-spock6.0.0-beta1-standard" -> "6"). Used to assert that the image
+	// actually ships the spock version its tag advertises.
+	spockMajor := spockMajorFromImage(image)
+
 	printHeader(image, flavor)
 
 	cli, ctx := setupDockerClient()
@@ -59,12 +64,39 @@ func main() {
 	}
 
 	errorCount := runEntrypointTests(defaultRunner, flavor)
-	errorCount += runExtensionTests(cli, ctx, image, flavor)
+	errorCount += runExtensionTests(cli, ctx, image, flavor, spockMajor)
 
-	printSummary(errorCount, flavor)
+	printSummary(errorCount, flavor, spockMajor)
 	if errorCount > 0 {
 		os.Exit(1)
 	}
+}
+
+// spockMajorFromImage extracts the spock major version from an image reference's
+// tag, e.g. "ghcr.io/pgedge/pgedge-postgres:16.14-spock6.0.0-beta1-standard-1"
+// or "...:16-spock6-standard" both yield "6". It returns "" when no spock
+// version can be determined, in which case the version assertion is skipped.
+func spockMajorFromImage(image string) string {
+	// Isolate the tag: the portion after the final ':'. Registry ports (e.g.
+	// "127.0.0.1:5000/...") use earlier colons, so the last one starts the tag.
+	tag := image
+	if idx := strings.LastIndex(image, ":"); idx != -1 {
+		tag = image[idx+1:]
+	}
+
+	idx := strings.Index(tag, "spock")
+	if idx == -1 {
+		return ""
+	}
+
+	var major strings.Builder
+	for _, c := range tag[idx+len("spock"):] {
+		if c < '0' || c > '9' {
+			break
+		}
+		major.WriteRune(c)
+	}
+	return major.String()
 }
 
 func parseFlags() (string, string) {
@@ -135,7 +167,7 @@ func runEntrypointTests(runner *DefaultEntrypointRunner, flavor string) int {
 	return errorCount
 }
 
-func runExtensionTests(cli *client.Client, ctx context.Context, image, flavor string) int {
+func runExtensionTests(cli *client.Client, ctx context.Context, image, flavor, spockMajor string) int {
 	printPhaseHeader("Phase 3: Extension Tests")
 
 	runner := &TestRunner{
@@ -154,7 +186,7 @@ func runExtensionTests(cli *client.Client, ctx context.Context, image, flavor st
 	}
 	defer runner.Cleanup()
 
-	tests := buildTestSuite()
+	tests := buildTestSuite(spockMajor)
 	return runner.RunTests(tests)
 }
 
@@ -163,8 +195,8 @@ func printPhaseHeader(title string) {
 	fmt.Println()
 }
 
-func printSummary(errorCount int, flavor string) {
-	tests := buildTestSuite()
+func printSummary(errorCount int, flavor, spockMajor string) {
+	tests := buildTestSuite(spockMajor)
 	extensionTests := 0
 	for _, t := range tests {
 		if !t.StandardOnly || flavor == "standard" {
@@ -625,12 +657,44 @@ func (r *TestRunner) RunTests(tests []Test) int {
 	return errorCount
 }
 
-func buildTestSuite() []Test {
+func buildTestSuite(spockMajor string) []Test {
 	tests := []Test{}
 	tests = append(tests, getPostgreSQLTests()...)
 	tests = append(tests, getCommonExtensionTests()...)
+	// Runs after getCommonExtensionTests, which creates the spock extension.
+	tests = append(tests, getSpockVersionTests(spockMajor)...)
 	tests = append(tests, getStandardOnlyTests()...)
 	return tests
+}
+
+// getSpockVersionTests asserts that the spock extension installed in the image
+// matches the major version advertised by the image tag. This distinguishes,
+// for example, a spock6 image from a spock5 image — a mismatch would otherwise
+// pass every other test unnoticed. Returns no tests when the expected major
+// version could not be derived from the image tag.
+func getSpockVersionTests(spockMajor string) []Test {
+	if spockMajor == "" {
+		return nil
+	}
+	return []Test{
+		{
+			Name: fmt.Sprintf("Spock extension major version is %s", spockMajor),
+			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT extversion FROM pg_extension WHERE extname = 'spock';\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				version := strings.TrimSpace(output)
+				if version == "" {
+					return fmt.Errorf("spock extension is not installed")
+				}
+				if !strings.HasPrefix(version, spockMajor+".") {
+					return fmt.Errorf("spock version %q does not match expected major version %s", version, spockMajor)
+				}
+				return nil
+			},
+		},
+	}
 }
 
 func getPostgreSQLTests() []Test {
