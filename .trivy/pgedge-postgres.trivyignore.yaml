@@ -1,0 +1,10 @@
+# Usage:
+#   trivy image --ignorefile .trivy/pgedge-postgres.trivyignore.yaml <pgedge-postgres image ref>
+#
+# Example entry:
+# vulnerabilities:
+#   - id: CVE-XXXX-YYYY
+#     statement: "Justification for accepting this risk"
+
+# No accepted-risk suppressions: all current findings are remediated in the Dockerfile.
+vulnerabilities: []
