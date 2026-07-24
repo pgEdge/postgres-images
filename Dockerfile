@@ -118,12 +118,13 @@ xargs dnf install -y < /usr/share/pgedge/packages.txt
 dnf update -y
 # Patroni's HTTP client dependencies only ship security fixes for Python >= 3.10
 # (urllib3 >= 2.7.0, requests >= 2.33.0), while the system python3 is 3.9. Install
-# patroni under python3.12 so it pulls the patched urllib3/requests, resolving
+# patroni under python3.12 so it can pull the patched urllib3/requests, resolving
 # CVE-2026-44431 and CVE-2026-44432 (urllib3) and CVE-2026-25645 (requests). The
-# psycopg3 extra bundles libpq, so patroni no longer relies on the Python
-# 3.9-only system psycopg2.
+# floors are pinned explicitly (patroni does not constrain them) so the build
+# fails loudly if a fixed version is ever unavailable. The psycopg3 extra bundles
+# libpq, so patroni no longer relies on the Python 3.9-only system psycopg2.
 dnf install -y python3.12 python3.12-pip
-python3.12 -m pip install 'patroni[etcd,jsonlogger,psycopg3]==4.1.3'
+python3.12 -m pip install 'patroni[etcd,jsonlogger,psycopg3]==4.1.3' 'urllib3>=2.7.0' 'requests>=2.33.0'
 dnf remove -y python3.12-pip
 dnf clean all
 
