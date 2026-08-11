@@ -179,7 +179,7 @@ all_images: list[PgEdgeImage] = [
     ),
     # pg18 images
     *make_all_flavor_images(
-        postgres_version="18.5",
+        postgres_version="18.6",
         spock_version="5.0.11",
         epoch=1,
         is_latest_for_pg_major=True,
@@ -206,7 +206,7 @@ all_images: list[PgEdgeImage] = [
     ),
     # pg18 spock60 images
     *make_all_flavor_images(
-        postgres_version="18.5",
+        postgres_version="18.6",
         spock_version="6.0.0-beta1",
         epoch=1,
         is_latest_for_pg_major=True,

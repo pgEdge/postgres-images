@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Upgraded to PostgreSQL 16.15, 17.11, and 18.5
+- Upgraded to PostgreSQL 16.15, 17.11, and 18.6
 - Upgraded PostGIS to 3.6.4, pgBackRest to 2.59.0, and system_stats to 4.0 in
   standard images
 
