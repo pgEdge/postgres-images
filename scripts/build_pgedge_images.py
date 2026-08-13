@@ -161,7 +161,7 @@ def make_all_flavor_images(
 all_images: list[PgEdgeImage] = [
     # pg16 images
     *make_all_flavor_images(
-        postgres_version="16.14",
+        postgres_version="16.15",
         spock_version="5.0.11",
         epoch=1,
         is_latest_for_pg_major=True,
@@ -169,7 +169,7 @@ all_images: list[PgEdgeImage] = [
     ),
     # pg17 images
     *make_all_flavor_images(
-        postgres_version="17.10",
+        postgres_version="17.11",
         spock_version="5.0.11",
         epoch=1,
         is_latest_for_pg_major=True,
@@ -177,7 +177,7 @@ all_images: list[PgEdgeImage] = [
     ),
     # pg18 images
     *make_all_flavor_images(
-        postgres_version="18.4",
+        postgres_version="18.6",
         spock_version="5.0.11",
         epoch=1,
         is_latest_for_pg_major=True,
@@ -185,25 +185,25 @@ all_images: list[PgEdgeImage] = [
     ),
     # pg16 spock60 images
     *make_all_flavor_images(
-        postgres_version="16.14",
+        postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        epoch=2,
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
     *make_all_flavor_images(
-        postgres_version="17.10",
+        postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        epoch=2,
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
     *make_all_flavor_images(
-        postgres_version="18.4",
+        postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        epoch=2,
+        epoch=1,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
