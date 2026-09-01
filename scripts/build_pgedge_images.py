@@ -163,7 +163,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="16.15",
         spock_version="5.0.11",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -171,7 +171,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="17.11",
         spock_version="5.0.11",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -179,7 +179,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="18.6",
         spock_version="5.0.11",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -187,7 +187,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -195,7 +195,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -203,7 +203,7 @@ all_images: list[PgEdgeImage] = [
     *make_all_flavor_images(
         postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        epoch=1,
+        epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
