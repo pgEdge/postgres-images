@@ -166,3 +166,58 @@ STOPSIGNAL SIGINT
 
 EXPOSE 5432
 CMD ["postgres"]
+
+############################
+# coldfront-flavored image #
+############################
+#
+# Chained FROM standard rather than FROM base: ColdFront's vector-tiering path
+# needs pgvector, which only standard ships. Chaining also makes the coldfront
+# layers a genuine delta over standard rather than a parallel full install, so
+# the inherited layers keep byte-identical digests.
+
+FROM standard AS coldfront
+
+# A separate ARG is required. This stage cannot reuse PACKAGE_LIST_FILE, because
+# that ARG is consumed by the inherited standard stage -- passing the coldfront
+# list through it would make standard COPY the coldfront list in place of its own.
+ARG COLDFRONT_PACKAGE_LIST_FILE
+ARG TARGETARCH
+ARG POSTGRES_MAJOR_VERSION
+
+USER root
+
+COPY packagelists/${TARGETARCH}/${COLDFRONT_PACKAGE_LIST_FILE} /usr/share/pgedge/coldfront-packages.txt
+
+RUN <<CFEOF
+#!/usr/bin/env bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# Only what this stage installs is pinned. pg-duckdb and the DuckDB extensions
+# are dependencies of pgedge-coldfront_<major> and are dnf's to resolve.
+# Deliberately no second "dnf update -y": the inherited standard layers already
+# ran one, and repeating it here would move ColdFront past its pinned NVR.
+xargs dnf install -y --setopt=install_weak_deps=False < /usr/share/pgedge/coldfront-packages.txt
+dnf clean all
+
+CFEOF
+
+# ColdFront needs pg_duckdb and coldfront preloaded at postmaster start, and
+# DuckDB's extensions come from the read-only RPM path. autoinstall is off: the
+# RPM ships all four loadable extensions and httpfs is compiled into libduckdb,
+# so nothing needs fetching -- and with allow_unsigned on, autoinstall would mean
+# loading unsigned code from the network at runtime.
+ENV COLDFRONT_PRELOAD="pg_duckdb,coldfront"
+ENV COLDFRONT_EXTENSION_DIR="/usr/lib/pgedge/coldfront/duckdb-extensions"
+
+COPY coldfront-entrypoint.sh /usr/local/bin/
+
+USER postgres
+
+ENTRYPOINT ["/usr/local/bin/coldfront-entrypoint.sh"]
+STOPSIGNAL SIGINT
+EXPOSE 5432
+CMD ["postgres"]

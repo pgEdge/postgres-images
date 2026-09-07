@@ -34,6 +34,17 @@ class Config:
         )
 
 
+# Flavors that are built FROM another flavor rather than FROM base. A chained
+# flavor's build also runs its parent's stage, so the parent's packagelist has to
+# be passed alongside the child's -- see build().
+FLAVOR_PARENTS = {"coldfront": "standard"}
+
+# Flavors built for every image. coldfront is deliberately absent: ColdFront's
+# cold-write protocol is validated against spock 5 only, so it is opted in per
+# image rather than fanned out over the whole matrix.
+DEFAULT_FLAVORS = ["minimal", "standard"]
+
+
 @dataclass
 class Tag:
     postgres_version: str
@@ -74,14 +85,23 @@ class PgEdgeImage:
     def spock_major(self) -> str:
         return self.spock_version.split(".")[0]
 
-    @property
-    def package_list(self) -> str:
+    def _package_list_for(self, flavor: str) -> str:
         filename = f"pg{self.postgres_version}-spock{self.spock_version}"
 
-        if self.flavor:
-            filename += f"-{self.flavor}"
+        if flavor:
+            filename += f"-{flavor}"
 
         return filename + ".txt"
+
+    @property
+    def package_list(self) -> str:
+        return self._package_list_for(self.flavor)
+
+    @property
+    def parent_package_list(self) -> str:
+        """Packagelist of the flavor this one is chained FROM, or "" if none."""
+        parent = FLAVOR_PARENTS.get(self.flavor)
+        return self._package_list_for(parent) if parent else ""
 
     @property
     def build_tag(self) -> Tag:
@@ -138,9 +158,10 @@ def make_all_flavor_images(
     is_latest_for_pg_major: bool = False,
     is_latest_for_spock_major: bool = False,
     package_release_channel: str = "",
+    flavors: list[str] = None,
 ) -> list[PgEdgeImage]:
     images: list[PgEdgeImage] = []
-    for flavor in ["minimal", "standard"]:
+    for flavor in flavors if flavors is not None else DEFAULT_FLAVORS:
         images.append(
             PgEdgeImage(
                 postgres_version=postgres_version,
@@ -166,6 +187,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg17 images
     *make_all_flavor_images(
@@ -174,6 +196,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg18 images
     *make_all_flavor_images(
@@ -182,6 +205,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg16 spock60 images
     *make_all_flavor_images(
@@ -284,7 +308,12 @@ def build(
             **os.environ.copy(),
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
             "POSTGRES_MAJOR_VERSION": image.postgres_major,
-            "PACKAGE_LIST_FILE": image.package_list,
+            # A chained flavor needs its parent's list for the inherited stage and
+            # its own for the delta stage; an unchained flavor sends only its own.
+            "PACKAGE_LIST_FILE": image.parent_package_list or image.package_list,
+            "COLDFRONT_PACKAGE_LIST_FILE": (
+                image.package_list if image.parent_package_list else ""
+            ),
             "TAG": f"{repo}:{image.build_tag}",
             "TARGET": image.flavor,
         },

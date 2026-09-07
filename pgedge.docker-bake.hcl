@@ -21,6 +21,14 @@ variable "PACKAGE_LIST_FILE" {
   default = ""
 }
 
+// Chained flavors need their own packagelist ARG. A flavor built FROM another
+// flavor still triggers the parent stage, which consumes PACKAGE_LIST_FILE, so
+// reusing that variable would make the parent install the child's list.
+variable "COLDFRONT_PACKAGE_LIST_FILE" {
+  type    = string
+  default = ""
+}
+
 variable "TAG" {
   type    = string
   default = "pgedge"
@@ -31,9 +39,10 @@ target "default" {
   target = TARGET
   tags    = [TAG]
   args = {
-    PACKAGE_RELEASE_CHANNEL = PACKAGE_RELEASE_CHANNEL
-    PACKAGE_LIST_FILE       = PACKAGE_LIST_FILE
-    POSTGRES_MAJOR_VERSION  = POSTGRES_MAJOR_VERSION
+    PACKAGE_RELEASE_CHANNEL     = PACKAGE_RELEASE_CHANNEL
+    PACKAGE_LIST_FILE           = PACKAGE_LIST_FILE
+    COLDFRONT_PACKAGE_LIST_FILE = COLDFRONT_PACKAGE_LIST_FILE
+    POSTGRES_MAJOR_VERSION      = POSTGRES_MAJOR_VERSION
   }
   platforms = [
     "linux/amd64",
