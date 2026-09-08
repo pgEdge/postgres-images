@@ -22,6 +22,14 @@ set -o nounset
 
 useradd -u ${POSTGRES_USER_ID} -m postgres -s /bin/bash
 
+cat >> /etc/dnf/dnf.conf <<'CONF'
+retries=10
+timeout=30
+minrate=100k
+fastestmirror=1
+max_parallel_downloads=10
+CONF
+
 dnf install -y epel-release dnf
 dnf config-manager --set-enabled crb
 dnf update -y --allowerasing
