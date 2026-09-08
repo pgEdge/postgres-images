@@ -25,7 +25,13 @@ not a hardcoded role name: Postgres automatically maintains membership
 in this predefined role to match whoever currently owns the database,
 so the grant keeps working even if that database is later reassigned
 to a different owner, and needs no assumption about what the owner is
-named. See `pg_cron`'s `after-create.sql` for the pattern. A script
-that blocks an install outright regardless of role (see `lolor`'s
-`before-create.sql`) has no such grant to make in the first place,
-refusing a broken install is correct for every consumer of this image.
+named. See `pg_cron`'s `after-create.sql` for the pattern.
+
+A script here only runs in a session that has `supautils` loaded, which
+in practice means a session installing a privileged (allowlisted,
+superuser-switched) extension. It is the wrong place for a check that
+must hold regardless of role or session, most importantly for a
+trusted extension a customer could install directly with no privileged
+session involved at all: a deployment that relies on this mechanism
+for that case needs a database-level enforcement instead, such as an
+event trigger, not a script under this path.
