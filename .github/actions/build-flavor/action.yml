@@ -36,9 +36,15 @@ runs:
   steps:
     # No QEMU: the calling job selects a runner native to the target
     # architecture, so nothing here is emulated.
+    # buildx-init only registers the builder; buildx selects it via the
+    # BUILDX_BUILDER environment variable. Without this the build lands on the
+    # default docker driver, which rejects the bake file's attestations.
     - name: Setup Docker Buildx
       shell: bash
-      run: make buildx-init
+      run: |
+        set -o errexit -o pipefail
+        make buildx-init
+        echo "BUILDX_BUILDER=$(make -s print-buildx-builder)" >> "$GITHUB_ENV"
 
     - name: Login to the container registry
       if: ${{ inputs.dry_run != 'true' }}

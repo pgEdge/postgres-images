@@ -36,6 +36,12 @@ buildx-init:
 		--platform=linux/arm64,linux/amd64 \
 		--config=$(BUILDX_CONFIG)
 
+# Prints the builder name so callers other than pgedge-images can select it.
+# buildx-init only *creates* the builder; buildx picks it up via BUILDX_BUILDER.
+.PHONY: print-buildx-builder
+print-buildx-builder:
+	@echo $(BUILDX_BUILDER)
+
 .PHONY: pgedge-images
 pgedge-images:
 	PGEDGE_IMAGE_REPO=$(PGEDGE_IMAGE_REPO) \
