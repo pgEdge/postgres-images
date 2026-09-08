@@ -133,6 +133,13 @@ EOF
 ENV PGDATA=/var/lib/pgsql/${POSTGRES_MAJOR_VERSION}/data
 RUN install --verbose --directory --owner postgres --group postgres --mode 1777 "$PGDATA"
 
+# supautils.extension_custom_scripts_path scripts. Baked into the image
+# rather than a runtime mount: supautils reads these from a plain
+# filesystem path with no other configuration hook available. See
+# extension-custom-scripts/README.md for the convention new scripts
+# follow.
+COPY --chown=postgres:postgres extension-custom-scripts /etc/pgedge/extension-custom-scripts
+
 USER postgres
 
 ENV PG_MAJOR=${POSTGRES_MAJOR_VERSION}
