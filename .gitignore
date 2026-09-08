@@ -8,3 +8,6 @@ __pycache__/
 # Go binaries
 tests/tests
 
+# Scratch written by the image build (bake metadata, per-arch digests)
+digests/
+metadata.json

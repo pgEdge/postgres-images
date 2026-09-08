@@ -1,7 +1,7 @@
-pgedge-postgresql18-18.6-1.el9
-pgedge-spock50_18-5.0.11-1.el9
-pgedge-snowflake_18-2.6.0-1.el9
-pgedge-lolor_18-1.2.2-1.el9
+# Delta over pg18.6-spock5.0.11-minimal.txt -- standard is chained FROM minimal, so the
+# packages minimal already pins are deliberately absent here. Re-pinning one
+# that minimal's 'dnf update -y' has moved past its NVR is a downgrade, which
+# dnf refuses.
 pgedge-pgaudit_18-18.0-1.el9
 pgedge-postgis36_18-3.6.4-1.el9
 pgedge-pgvector_18-0.8.5-1.el9

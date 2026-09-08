@@ -34,10 +34,18 @@ class Config:
         )
 
 
-# Flavors that are built FROM another flavor rather than FROM base. A chained
-# flavor's build also runs its parent's stage, so the parent's packagelist has to
-# be passed alongside the child's -- see build().
-FLAVOR_PARENTS = {"coldfront": "standard"}
+# Flavors that are built FROM another flavor rather than FROM base. Building a
+# chained flavor in one graph also runs every ancestor's stage, and each stage
+# consumes its own packagelist ARG, so build() has to pass the whole ancestry --
+# see PgEdgeImage.package_list_args.
+FLAVOR_PARENTS = {"standard": "minimal", "coldfront": "standard"}
+
+# The Dockerfile ARG each flavor's stage reads its packagelist from.
+FLAVOR_LIST_ARGS = {
+    "minimal": "PACKAGE_LIST_FILE",
+    "standard": "STANDARD_PACKAGE_LIST_FILE",
+    "coldfront": "COLDFRONT_PACKAGE_LIST_FILE",
+}
 
 # Flavors built for every image. coldfront is deliberately absent: ColdFront's
 # cold-write protocol is validated against spock 5 only, so it is opted in per
@@ -98,10 +106,46 @@ class PgEdgeImage:
         return self._package_list_for(self.flavor)
 
     @property
-    def parent_package_list(self) -> str:
-        """Packagelist of the flavor this one is chained FROM, or "" if none."""
+    def parent_build_tag(self) -> str:
+        """Immutable tag of the flavor this one is chained FROM, or "" if none.
+
+        The per-flavor wave model builds each flavor FROM the image the previous
+        wave published, so the stage is never rebuilt on a different runner.
+        """
         parent = FLAVOR_PARENTS.get(self.flavor)
-        return self._package_list_for(parent) if parent else ""
+        if not parent:
+            return ""
+        return str(
+            Tag(
+                postgres_version=self.postgres_version,
+                flavor=parent,
+                spock_version=self.spock_version,
+                epoch=self.epoch,
+            )
+        )
+
+    @property
+    def ancestry(self) -> list[str]:
+        """This flavor and every flavor it is chained FROM, base-most first."""
+        chain = [self.flavor]
+        while FLAVOR_PARENTS.get(chain[0]):
+            chain.insert(0, FLAVOR_PARENTS[chain[0]])
+        return chain
+
+    @property
+    def package_list_args(self) -> dict[str, str]:
+        """One packagelist build-arg per stage in this image's ancestry.
+
+        A single-graph build of a chained flavor runs its ancestors' stages too,
+        and each reads its own ARG, so all of them have to be supplied. Args for
+        flavors outside the ancestry are sent empty so bake does not carry a
+        stale value over from another image.
+        """
+        chain = self.ancestry
+        return {
+            arg: (self._package_list_for(flavor) if flavor in chain else "")
+            for flavor, arg in FLAVOR_LIST_ARGS.items()
+        }
 
     @property
     def build_tag(self) -> Tag:
@@ -234,6 +278,74 @@ all_images: list[PgEdgeImage] = [
 ]
 
 
+# Runner label per architecture. arm64 builds go to a native runner rather than
+# QEMU on an amd64 host: emulated dnf transactions dominate the build time.
+ARCH_RUNNERS = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+
+FLAVOR_WAVES = ["minimal", "standard", "coldfront"]
+
+
+def emit_matrix(config: "Config") -> None:
+    """Print the per-wave build and merge matrices as JSON.
+
+    The workflow consumes this instead of hardcoding the cell list, so the
+    matrix and the image definitions above cannot drift apart.
+
+    An image whose immutable tag is already published is left out of the build
+    matrix unless republish is set, but stays in the merge matrix with
+    needs_build false, so a re-dispatch repairs its mutable tags without
+    rebuilding anything.
+    """
+    arches = [config.only_arch] if config.only_arch else list(ARCH_RUNNERS)
+    waves: dict = {}
+
+    for flavor in FLAVOR_WAVES:
+        builds: list[dict] = []
+        merges: list[dict] = []
+
+        for image in all_images:
+            if image.flavor != flavor or _should_skip_image(image, config):
+                continue
+
+            needs_build = config.republish or not published_digests(
+                config.repo, image.build_tag
+            )
+            if not needs_build:
+                logging.info(f"{image.build_tag} is already published")
+
+            merges.append(
+                {
+                    "name": f"{image.postgres_major}-spock{image.spock_major}",
+                    "build_tag": str(image.build_tag),
+                    "extra_tags": [str(t) for t in image.extra_tags],
+                    "arches": arches,
+                    "needs_build": needs_build,
+                }
+            )
+
+            if not needs_build:
+                continue
+
+            for arch in arches:
+                builds.append(
+                    {
+                        "name": f"{image.postgres_major}-spock{image.spock_major}-{arch}",
+                        "runner": ARCH_RUNNERS[arch],
+                        "arch": arch,
+                        "target": flavor,
+                        "build_tag": str(image.build_tag),
+                        "postgres_major": image.postgres_major,
+                        "package_release_channel": image.package_release_channel,
+                        "parent_build_tag": image.parent_build_tag,
+                        "package_list_args": image.package_list_args,
+                    }
+                )
+
+        waves[flavor] = {"build": builds, "merge": merges}
+
+    print(json.dumps(waves))
+
+
 def validate_images(images: list[PgEdgeImage]):
     all_tags = set()
 
@@ -308,12 +420,7 @@ def build(
             **os.environ.copy(),
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
             "POSTGRES_MAJOR_VERSION": image.postgres_major,
-            # A chained flavor needs its parent's list for the inherited stage and
-            # its own for the delta stage; an unchained flavor sends only its own.
-            "PACKAGE_LIST_FILE": image.parent_package_list or image.package_list,
-            "COLDFRONT_PACKAGE_LIST_FILE": (
-                image.package_list if image.parent_package_list else ""
-            ),
+            **image.package_list_args,
             "TAG": f"{repo}:{image.build_tag}",
             "TARGET": image.flavor,
         },
@@ -407,6 +514,11 @@ def main():
 
     if config.list_latest_tags:
         print(",".join(get_latest_tags()))
+        return
+
+    if os.getenv("PGEDGE_EMIT_MATRIX", "0") == "1":
+        validate_images(all_images)
+        emit_matrix(config)
         return
 
     _log_config(config)
