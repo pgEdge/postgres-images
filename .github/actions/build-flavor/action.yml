@@ -1,0 +1,117 @@
+name: Build one image flavor
+description: >
+  Builds one flavor of one cell for a single architecture and pushes it by digest.
+  Push-by-digest leaves the manifest untagged; the merge-flavor action is what
+  assembles the tagged manifest list, so no consumer-facing tag ever points at a
+  half-published or unsigned image.
+
+inputs:
+  cell:
+    description: One build entry emitted by scripts/build_pgedge_images.py (PGEDGE_EMIT_MATRIX=1)
+    required: true
+  repo:
+    description: Image repository to push to
+    required: true
+  registry_token:
+    description: >
+      Token for the container registry. A composite action has no secrets
+      context, so this has to be passed in by the calling workflow.
+    required: true
+  dry_run:
+    description: When true, resolve and print the build without pushing
+    required: false
+    default: "false"
+  no_cache:
+    description: When true, build without cache
+    required: false
+    default: "false"
+
+outputs:
+  digest:
+    description: Digest of the pushed per-architecture manifest
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    # No QEMU: the calling job selects a runner native to the target
+    # architecture, so nothing here is emulated.
+    - name: Setup Docker Buildx
+      shell: bash
+      run: make buildx-init
+
+    - name: Login to the container registry
+      if: ${{ inputs.dry_run != 'true' }}
+      uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Build and push by digest
+      id: build
+      shell: bash
+      env:
+        CELL: ${{ inputs.cell }}
+        REPO: ${{ inputs.repo }}
+        DRY_RUN: ${{ inputs.dry_run }}
+        NO_CACHE: ${{ inputs.no_cache }}
+      run: |
+        set -o errexit -o pipefail -o nounset
+
+        target=$(jq -r '.target' <<< "$CELL")
+        arch=$(jq -r '.arch' <<< "$CELL")
+        parent=$(jq -r '.parent_build_tag' <<< "$CELL")
+        build_tag=$(jq -r '.build_tag' <<< "$CELL")
+
+        args=(
+          --file pgedge.docker-bake.hcl
+          --set "default.platform=linux/${arch}"
+          --set "default.tags="
+          --metadata-file metadata.json
+        )
+        if [[ "$NO_CACHE" == "true" ]]; then
+          args+=(--no-cache)
+        fi
+        if [[ "$DRY_RUN" == "true" ]]; then
+          args+=(--print)
+        else
+          args+=(--set "default.output=type=image,name=${REPO},push-by-digest=true,name-canonical=true,push=true")
+        fi
+
+        # A chained flavor starts FROM the image the previous wave published, so
+        # its ancestor stages are not part of this build graph at all. Passing
+        # their packagelists anyway is harmless and keeps the call uniform.
+        envs=(
+          "PACKAGE_RELEASE_CHANNEL=$(jq -r '.package_release_channel' <<< "$CELL")"
+          "POSTGRES_MAJOR_VERSION=$(jq -r '.postgres_major' <<< "$CELL")"
+          "PACKAGE_LIST_FILE=$(jq -r '.package_list_args.PACKAGE_LIST_FILE' <<< "$CELL")"
+          "STANDARD_PACKAGE_LIST_FILE=$(jq -r '.package_list_args.STANDARD_PACKAGE_LIST_FILE' <<< "$CELL")"
+          "COLDFRONT_PACKAGE_LIST_FILE=$(jq -r '.package_list_args.COLDFRONT_PACKAGE_LIST_FILE' <<< "$CELL")"
+          "TARGET=${target}"
+          "TAG=${REPO}"
+        )
+        case "$target" in
+          standard)  [[ -n "$parent" ]] && envs+=("MINIMAL_IMAGE=${REPO}:${parent}") ;;
+          coldfront) [[ -n "$parent" ]] && envs+=("STANDARD_IMAGE=${REPO}:${parent}") ;;
+        esac
+
+        env "${envs[@]}" docker buildx bake "${args[@]}"
+
+        if [[ "$DRY_RUN" != "true" ]]; then
+          digest=$(jq -r '.["default"]["containerimage.digest"] // .["containerimage.digest"]' metadata.json)
+          test -n "$digest" && test "$digest" != "null"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          mkdir -p digests
+          echo -n "$digest" > "digests/${arch}"
+          echo "::notice::${target} ${build_tag} ${arch} -> ${digest}"
+        fi
+
+    - name: Upload the digest for the merge job
+      if: ${{ inputs.dry_run != 'true' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: digest-${{ fromJSON(inputs.cell).target }}-${{ fromJSON(inputs.cell).build_tag }}-${{ fromJSON(inputs.cell).arch }}
+        path: digests/*
+        retention-days: 1
+        if-no-files-found: error

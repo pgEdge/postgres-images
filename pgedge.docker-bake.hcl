@@ -21,12 +21,31 @@ variable "PACKAGE_LIST_FILE" {
   default = ""
 }
 
-// Chained flavors need their own packagelist ARG. A flavor built FROM another
-// flavor still triggers the parent stage, which consumes PACKAGE_LIST_FILE, so
-// reusing that variable would make the parent install the child's list.
+// Every stage in the chain needs its own packagelist variable. A chained flavor
+// still triggers its ancestors' stages, and each of those consumes its own ARG,
+// so one shared variable would make an ancestor install a descendant's list.
+variable "STANDARD_PACKAGE_LIST_FILE" {
+  type    = string
+  default = ""
+}
+
 variable "COLDFRONT_PACKAGE_LIST_FILE" {
   type    = string
   default = ""
+}
+
+// Select what each chained stage is built FROM. Empty keeps the in-Dockerfile
+// default (the parent stage), which is the single-graph build. A registry
+// reference switches that stage to start from an already-published image, which
+// is what a per-flavor CI wave needs.
+variable "MINIMAL_IMAGE" {
+  type    = string
+  default = "minimal"
+}
+
+variable "STANDARD_IMAGE" {
+  type    = string
+  default = "standard"
 }
 
 variable "TAG" {
@@ -41,7 +60,10 @@ target "default" {
   args = {
     PACKAGE_RELEASE_CHANNEL     = PACKAGE_RELEASE_CHANNEL
     PACKAGE_LIST_FILE           = PACKAGE_LIST_FILE
+    STANDARD_PACKAGE_LIST_FILE  = STANDARD_PACKAGE_LIST_FILE
     COLDFRONT_PACKAGE_LIST_FILE = COLDFRONT_PACKAGE_LIST_FILE
+    MINIMAL_IMAGE               = MINIMAL_IMAGE
+    STANDARD_IMAGE              = STANDARD_IMAGE
     POSTGRES_MAJOR_VERSION      = POSTGRES_MAJOR_VERSION
   }
   platforms = [
