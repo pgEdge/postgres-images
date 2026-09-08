@@ -4,19 +4,15 @@
 -- and AddTopoGeometryColumn(), the extension's actual purpose, both
 -- write to tables it creates: topology.topology, topology.layer, and
 -- topology.topology_id_seq. Scoped to exactly these three objects
--- rather than a schema-wide grant: broadening the cluster-wide
--- default-privilege pattern used for other extensions was tried and
--- rejected, since it would also hand app write access to
--- pg_tokenizer's catalogs, a boundary kept deliberately admin-only.
+-- rather than a schema-wide grant, since broadening a similar
+-- database-wide default was tried elsewhere and rejected: it would
+-- also hand write access to other gated extensions' catalogs that are
+-- meant to stay admin-only.
 --
--- Runs only when a role named "app" exists (see pg_cron's
--- after-create.sql for why): a no-op otherwise.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
-    GRANT INSERT ON topology.topology TO app;
-    GRANT USAGE ON SEQUENCE topology.topology_id_seq TO app;
-    GRANT INSERT ON topology.layer TO app;
-  END IF;
-END;
-$$;
+-- Granted to pg_database_owner rather than a hardcoded role name, so
+-- this keeps working if the database is later reassigned to a
+-- different owner. See
+-- https://www.postgresql.org/docs/current/predefined-roles.html.
+GRANT INSERT ON topology.topology TO pg_database_owner;
+GRANT USAGE ON SEQUENCE topology.topology_id_seq TO pg_database_owner;
+GRANT INSERT ON topology.layer TO pg_database_owner;

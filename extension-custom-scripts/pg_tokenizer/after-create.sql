@@ -1,18 +1,15 @@
--- app gets read access to admin-configured tokenizer definitions
--- (tokenizer_catalog.*), not write: admin remains the role that
--- configures tokenizers. Scoped to this one schema, not a
--- database-wide default, so a future admin-gated extension's own
--- schema isn't exposed to app without its own deliberate grant here.
+-- The database's own owner gets read access to admin-configured
+-- tokenizer definitions (tokenizer_catalog.*), not write: whoever
+-- configures tokenizers stays a separate, more privileged concern.
+-- Scoped to this one schema, not a database-wide default, so a future
+-- gated extension's own schema isn't exposed without its own
+-- deliberate grant here.
 --
--- Runs only when a role named "app" exists (see pg_cron's
--- after-create.sql for why): a no-op otherwise.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app') THEN
-    GRANT USAGE ON SCHEMA tokenizer_catalog TO app;
-    GRANT SELECT ON ALL TABLES IN SCHEMA tokenizer_catalog TO app;
-    ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA tokenizer_catalog
-      GRANT SELECT ON TABLES TO app;
-  END IF;
-END;
-$$;
+-- Granted to pg_database_owner rather than a hardcoded role name, so
+-- this keeps working if the database is later reassigned to a
+-- different owner. See
+-- https://www.postgresql.org/docs/current/predefined-roles.html.
+GRANT USAGE ON SCHEMA tokenizer_catalog TO pg_database_owner;
+GRANT SELECT ON ALL TABLES IN SCHEMA tokenizer_catalog TO pg_database_owner;
+ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA tokenizer_catalog
+  GRANT SELECT ON TABLES TO pg_database_owner;
