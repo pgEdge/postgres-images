@@ -2,6 +2,11 @@
 # base image for all flavors #
 ##############################
 
+# Global ARG: an ARG used in a FROM instruction has to be declared before the
+# first FROM, outside any stage. See the coldfront stage for what it selects.
+ARG MINIMAL_IMAGE=minimal
+ARG STANDARD_IMAGE=standard
+
 FROM rockylinux/rockylinux:9-ubi AS base
 
 ARG PACKAGE_RELEASE_CHANNEL=""
@@ -48,7 +53,7 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-xargs dnf install -y < /usr/share/pgedge/packages.txt
+grep -vE '^[[:space:]]*(#|$)' /usr/share/pgedge/packages.txt | xargs dnf install -y
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
 dnf update -y
@@ -97,13 +102,22 @@ CMD ["postgres"]
 # standard-flavored image #
 ###########################
 
-FROM base AS standard
+# MINIMAL_IMAGE works exactly like STANDARD_IMAGE on the coldfront stage: the
+# default resolves to the stage above for a single-graph build, and a registry
+# reference makes this stage start from an already-published minimal, which is
+# what a per-flavor CI wave needs. Chaining rather than a second FROM base is
+# what makes standard's inherited layers byte-identical to minimal's -- as
+# parallel stages they shared only 1 of 6.
+FROM ${MINIMAL_IMAGE} AS standard
 
-ARG PACKAGE_LIST_FILE
+ARG STANDARD_PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
 
-COPY packagelists/${TARGETARCH}/${PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
+# The inherited stage ends as USER postgres.
+USER root
+
+COPY packagelists/${TARGETARCH}/${STANDARD_PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
 RUN <<EOF
 #!/usr/bin/env bash
@@ -112,7 +126,11 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-xargs dnf install -y < /usr/share/pgedge/packages.txt
+# A delta over minimal, not a full manifest: re-pinning a package that minimal's
+# "dnf update -y" has already moved past its NVR is a downgrade request, which
+# dnf refuses. Comments and blank lines are stripped so the list can document
+# its own chain.
+grep -vE '^[[:space:]]*(#|$)' /usr/share/pgedge/packages.txt | xargs dnf install -y
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
 dnf update -y
@@ -176,7 +194,17 @@ CMD ["postgres"]
 # layers a genuine delta over standard rather than a parallel full install, so
 # the inherited layers keep byte-identical digests.
 
-FROM standard AS coldfront
+# STANDARD_IMAGE selects what this flavor is chained from, and supports both
+# build models:
+#   * default "standard" resolves to the stage above, so a local or single-call
+#     build produces one graph in which the standard stage is built exactly once
+#     and both images provably inherit the same layers;
+#   * a registry reference (ideally digest-pinned) makes this stage start from an
+#     already-published standard, which is what a per-flavor CI wave needs -- the
+#     coldfront job runs on a different runner than the standard job, so
+#     rebuilding the stage there would re-run its unpinned "dnf update -y" and
+#     yield different layers.
+FROM ${STANDARD_IMAGE} AS coldfront
 
 # A separate ARG is required. This stage cannot reuse PACKAGE_LIST_FILE, because
 # that ARG is consumed by the inherited standard stage -- passing the coldfront
@@ -200,7 +228,8 @@ set -o nounset
 # are dependencies of pgedge-coldfront_<major> and are dnf's to resolve.
 # Deliberately no second "dnf update -y": the inherited standard layers already
 # ran one, and repeating it here would move ColdFront past its pinned NVR.
-xargs dnf install -y --setopt=install_weak_deps=False < /usr/share/pgedge/coldfront-packages.txt
+grep -vE '^[[:space:]]*(#|$)' /usr/share/pgedge/coldfront-packages.txt \
+    | xargs dnf install -y --setopt=install_weak_deps=False
 dnf clean all
 
 CFEOF

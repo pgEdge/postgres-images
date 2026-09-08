@@ -1,3 +1,21 @@
+# Per-flavor wave build.
+#
+# Each flavor is a wave of native single-platform builds -- one job per
+# (postgres major, spock version, architecture) -- followed by a merge round
+# that assembles the manifest list, signs it, and applies the mutable tags.
+# A wave builds FROM the image the previous wave published, so a chained stage
+# is never rebuilt on a second runner: rebuilding it would re-run its unpinned
+# "dnf update -y" and produce layers that differ from the published parent's.
+#
+# Why waves rather than one job per cell:
+#   * a flavor's failure cannot unpublish the flavors beneath it;
+#   * every layer is built exactly once, so the published images provably share
+#     them instead of relying on a warm build cache;
+#   * arm64 builds run on native runners instead of under QEMU.
+#
+# The matrix comes from scripts/build_pgedge_images.py, so the cell list cannot
+# drift away from the image definitions it already owns.
+
 name: build-images
 
 on:
@@ -9,7 +27,7 @@ on:
         default: "ghcr.io/pgedge/pgedge-postgres-internal"
         required: false
       pgedge_image_republish:
-        description: "Republish images? (true/false)"
+        description: "Republish images that are already published? (true/false)"
         type: boolean
         default: false
       pgedge_image_dry_run:
@@ -19,7 +37,7 @@ on:
       pgedge_image_no_cache:
         description: "Build without cache? (true/false)"
         type: boolean
-        default: true
+        default: false
       pgedge_image_only_postgres_version:
         description: "Build only this Postgres version (leave blank for all)"
         type: string
@@ -50,22 +68,27 @@ env:
   PGEDGE_IMAGE_ONLY_ARCH: ${{ inputs.pgedge_image_only_arch }}
 
 jobs:
-  build-images:
-    runs-on: ubuntu-latest
+  plan:
+    name: Plan waves
+    runs-on: ubuntu-24.04
+    outputs:
+      minimal_build: ${{ steps.matrix.outputs.minimal_build }}
+      minimal_merge: ${{ steps.matrix.outputs.minimal_merge }}
+      standard_build: ${{ steps.matrix.outputs.standard_build }}
+      standard_merge: ${{ steps.matrix.outputs.standard_merge }}
+      coldfront_build: ${{ steps.matrix.outputs.coldfront_build }}
+      coldfront_merge: ${{ steps.matrix.outputs.coldfront_merge }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - name: Set up python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.x'
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
-
-      - name: Setup Docker Buildx
-        run: |
-          make buildx-init
-
+      # The plan reads the registry to decide what is already published, so it
+      # needs credentials even though it publishes nothing itself.
       - name: Login to GitHub Container Registry
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
@@ -73,11 +96,147 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.x'
-      
-      - name: Build images
+      - name: Emit the wave matrices
+        id: matrix
         run: |
-          make pgedge-images
+          set -o errexit -o pipefail
+          PGEDGE_EMIT_MATRIX=1 ./scripts/build_pgedge_images.py > waves.json
+          for flavor in minimal standard coldfront; do
+            for kind in build merge; do
+              value=$(python3 -c "import json;print(json.dumps(json.load(open('waves.json'))['$flavor']['$kind']))")
+              echo "${flavor}_${kind}=${value}" >> "$GITHUB_OUTPUT"
+            done
+          done
+
+      - name: Show the plan
+        run: python3 -m json.tool waves.json
+
+  build-minimal:
+    name: "minimal ${{ matrix.cell.name }}"
+    needs: [plan]
+    if: ${{ fromJSON(needs.plan.outputs.minimal_build)[0] != null }}
+    runs-on: ${{ matrix.cell.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.minimal_build) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Build and push by digest
+        uses: ./.github/actions/build-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+          no_cache: ${{ inputs.pgedge_image_no_cache }}
+
+  merge-minimal:
+    name: "merge minimal ${{ matrix.cell.name }}"
+    needs: [plan, build-minimal]
+    if: ${{ fromJSON(needs.plan.outputs.minimal_merge)[0] != null }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.minimal_merge) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Merge, sign and tag
+        uses: ./.github/actions/merge-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+
+  build-standard:
+    name: "standard ${{ matrix.cell.name }}"
+    needs: [plan, merge-minimal]
+    if: ${{ fromJSON(needs.plan.outputs.standard_build)[0] != null }}
+    runs-on: ${{ matrix.cell.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.standard_build) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Build and push by digest
+        uses: ./.github/actions/build-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+          no_cache: ${{ inputs.pgedge_image_no_cache }}
+
+  merge-standard:
+    name: "merge standard ${{ matrix.cell.name }}"
+    needs: [plan, build-standard]
+    if: ${{ fromJSON(needs.plan.outputs.standard_merge)[0] != null }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.standard_merge) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Merge, sign and tag
+        uses: ./.github/actions/merge-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+
+  # A failure here leaves this run's minimal and standard images published.
+  build-coldfront:
+    name: "coldfront ${{ matrix.cell.name }}"
+    needs: [plan, merge-standard]
+    if: ${{ fromJSON(needs.plan.outputs.coldfront_build)[0] != null }}
+    runs-on: ${{ matrix.cell.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.coldfront_build) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Build and push by digest
+        uses: ./.github/actions/build-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+          no_cache: ${{ inputs.pgedge_image_no_cache }}
+
+  merge-coldfront:
+    name: "merge coldfront ${{ matrix.cell.name }}"
+    needs: [plan, build-coldfront]
+    if: ${{ fromJSON(needs.plan.outputs.coldfront_merge)[0] != null }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.coldfront_merge) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Merge, sign and tag
+        uses: ./.github/actions/merge-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
