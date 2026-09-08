@@ -135,8 +135,18 @@ jobs:
 
   merge-minimal:
     name: "merge minimal ${{ matrix.cell.name }}"
+    # An empty matrix skips a job, and a skipped "needs" fails the implicit
+    # success() of everything downstream. So each job below lists its whole
+    # upstream chain and blocks only on a real failure. Every upstream job is
+    # named rather than just the previous one, because a failure reaches the
+    # next job as a *skip*: checking only the immediate predecessor would let a
+    # later wave build on top of a broken earlier one.
     needs: [plan, build-minimal]
-    if: ${{ fromJSON(needs.plan.outputs.minimal_merge)[0] != null }}
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-minimal.result != 'failure'
+          && fromJSON(needs.plan.outputs.minimal_merge)[0] != null }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -156,8 +166,13 @@ jobs:
 
   build-standard:
     name: "standard ${{ matrix.cell.name }}"
-    needs: [plan, merge-minimal]
-    if: ${{ fromJSON(needs.plan.outputs.standard_build)[0] != null }}
+    needs: [plan, build-minimal, merge-minimal]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-minimal.result != 'failure'
+          && needs.merge-minimal.result != 'failure'
+          && fromJSON(needs.plan.outputs.standard_build)[0] != null }}
     runs-on: ${{ matrix.cell.runner }}
     strategy:
       fail-fast: false
@@ -178,8 +193,14 @@ jobs:
 
   merge-standard:
     name: "merge standard ${{ matrix.cell.name }}"
-    needs: [plan, build-standard]
-    if: ${{ fromJSON(needs.plan.outputs.standard_merge)[0] != null }}
+    needs: [plan, build-minimal, merge-minimal, build-standard]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-minimal.result != 'failure'
+          && needs.merge-minimal.result != 'failure'
+          && needs.build-standard.result != 'failure'
+          && fromJSON(needs.plan.outputs.standard_merge)[0] != null }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -200,8 +221,15 @@ jobs:
   # A failure here leaves this run's minimal and standard images published.
   build-coldfront:
     name: "coldfront ${{ matrix.cell.name }}"
-    needs: [plan, merge-standard]
-    if: ${{ fromJSON(needs.plan.outputs.coldfront_build)[0] != null }}
+    needs: [plan, build-minimal, merge-minimal, build-standard, merge-standard]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-minimal.result != 'failure'
+          && needs.merge-minimal.result != 'failure'
+          && needs.build-standard.result != 'failure'
+          && needs.merge-standard.result != 'failure'
+          && fromJSON(needs.plan.outputs.coldfront_build)[0] != null }}
     runs-on: ${{ matrix.cell.runner }}
     strategy:
       fail-fast: false
@@ -222,8 +250,16 @@ jobs:
 
   merge-coldfront:
     name: "merge coldfront ${{ matrix.cell.name }}"
-    needs: [plan, build-coldfront]
-    if: ${{ fromJSON(needs.plan.outputs.coldfront_merge)[0] != null }}
+    needs: [plan, build-minimal, merge-minimal, build-standard, merge-standard, build-coldfront]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-minimal.result != 'failure'
+          && needs.merge-minimal.result != 'failure'
+          && needs.build-standard.result != 'failure'
+          && needs.merge-standard.result != 'failure'
+          && needs.build-coldfront.result != 'failure'
+          && fromJSON(needs.plan.outputs.coldfront_merge)[0] != null }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
