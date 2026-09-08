@@ -27,11 +27,15 @@ so the grant keeps working even if that database is later reassigned
 to a different owner, and needs no assumption about what the owner is
 named. See `pg_cron`'s `after-create.sql` for the pattern.
 
-A script here only runs in a session that has `supautils` loaded, which
-in practice means a session installing a privileged (allowlisted,
-superuser-switched) extension. It is the wrong place for a check that
-must hold regardless of role or session, most importantly for a
-trusted extension a customer could install directly with no privileged
-session involved at all: a deployment that relies on this mechanism
-for that case needs a database-level enforcement instead, such as an
-event trigger, not a script under this path.
+A script here only runs in a session that has `supautils` loaded,
+which in practice means a session installing a privileged
+(allowlisted, superuser-switched) extension. It is the wrong place for
+a check that must hold regardless of role or session: a trusted
+extension can be installed directly, with no privileged session (and
+so no `supautils`) involved at all. `lolor` needs exactly this kind of
+check (see its own `before-create.sql`), which only reliably runs
+because its control file is patched to `trusted = false` in the
+Dockerfile, forcing every install through the gate. A future script
+with the same need should do the same: fix the extension's own trust
+flag first, don't rely on a script here alone to catch a path that
+never goes through `supautils` in the first place.
