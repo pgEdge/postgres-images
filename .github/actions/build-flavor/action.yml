@@ -54,6 +54,13 @@ runs:
         username: ${{ github.actor }}
         password: ${{ inputs.registry_token }}
 
+    - name: Set up Go
+      if: ${{ inputs.dry_run != 'true' }}
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      with:
+        go-version: '1.25'
+        cache-dependency-path: tests/go.sum
+
     - name: Build and push by digest
       id: build
       shell: bash
@@ -112,6 +119,25 @@ runs:
           echo -n "$digest" > "digests/${arch}"
           echo "::notice::${target} ${build_tag} ${arch} -> ${digest}"
         fi
+
+    # Runs against the bytes just pushed, on a runner native to their
+    # architecture, so a broken image never reaches the merge step. The digest is
+    # re-tagged locally first: the harness derives the expected spock major from
+    # the tag and silently skips that assertion for a bare digest reference.
+    - name: Test the pushed image
+      if: ${{ inputs.dry_run != 'true' }}
+      shell: bash
+      env:
+        CELL: ${{ inputs.cell }}
+        REPO: ${{ inputs.repo }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        set -o errexit -o pipefail -o nounset
+        target=$(jq -r '.target' <<< "$CELL")
+        build_tag=$(jq -r '.build_tag' <<< "$CELL")
+        docker pull -q "${REPO}@${DIGEST}"
+        docker tag "${REPO}@${DIGEST}" "${REPO}:${build_tag}"
+        make test-image IMAGE="${REPO}:${build_tag}" FLAVOR="${target}"
 
     - name: Upload the digest for the merge job
       if: ${{ inputs.dry_run != 'true' }}

@@ -247,6 +247,15 @@ CFEOF
 # RPM ships all four loadable extensions and httpfs is compiled into libduckdb,
 # so nothing needs fetching -- and with allow_unsigned on, autoinstall would mean
 # loading unsigned code from the network at runtime.
+# A writable home for configuration the entrypoint renders from the environment.
+# The packaged /etc/pgedge/coldfront/config.yaml cannot serve: it is
+# 0600 coldfront:coldfront for the bare-metal service account, while this image
+# runs as postgres. Declared here rather than created at runtime so the path is
+# discoverable, and so it can be mounted -- which is what a --read-only root
+# filesystem needs.
+RUN install --verbose --directory --owner postgres --group postgres --mode 0700 \
+        /var/lib/pgedge/coldfront
+
 ENV COLDFRONT_PRELOAD="pg_duckdb,coldfront"
 ENV COLDFRONT_EXTENSION_DIR="/usr/lib/pgedge/coldfront/duckdb-extensions"
 
