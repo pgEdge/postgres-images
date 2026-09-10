@@ -44,6 +44,14 @@ FLAVOR_PARENTS = {"minimal": "postgres", "standard": "minimal", "coldfront": "st
 # would claim a version the image does not contain.
 SPOCK_INDEPENDENT_FLAVORS = {"postgres"}
 
+# The Dockerfile ARG that selects what a chained flavor is built FROM. Emitted
+# with each cell so the workflow never has to know these names.
+FLAVOR_IMAGE_ARGS = {
+    "minimal": "POSTGRES_IMAGE",
+    "standard": "MINIMAL_IMAGE",
+    "coldfront": "STANDARD_IMAGE",
+}
+
 # The Dockerfile ARG each flavor's stage reads its packagelist from.
 FLAVOR_LIST_ARGS = {
     "postgres": "POSTGRES_PACKAGE_LIST_FILE",
@@ -368,6 +376,7 @@ def emit_matrix(config: "Config") -> None:
                         "postgres_major": image.postgres_major,
                         "package_release_channel": image.package_release_channel,
                         "parent_build_tag": image.parent_build_tag,
+                        "parent_image_arg": FLAVOR_IMAGE_ARGS.get(flavor, ""),
                         "package_list_args": image.package_list_args,
                     }
                 )

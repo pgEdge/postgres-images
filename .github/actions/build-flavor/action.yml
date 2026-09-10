@@ -92,22 +92,23 @@ runs:
           args+=(--set "default.output=type=image,name=${REPO},push-by-digest=true,name-canonical=true,push=true")
         fi
 
-        # A chained flavor starts FROM the image the previous wave published, so
-        # its ancestor stages are not part of this build graph at all. Passing
-        # their packagelists anyway is harmless and keeps the call uniform.
+        # Every packagelist ARG comes from the cell, so a new flavor needs no
+        # change here -- only the Dockerfile and the driver's maps.
         envs=(
           "PACKAGE_RELEASE_CHANNEL=$(jq -r '.package_release_channel' <<< "$CELL")"
           "POSTGRES_MAJOR_VERSION=$(jq -r '.postgres_major' <<< "$CELL")"
-          "PACKAGE_LIST_FILE=$(jq -r '.package_list_args.PACKAGE_LIST_FILE' <<< "$CELL")"
-          "STANDARD_PACKAGE_LIST_FILE=$(jq -r '.package_list_args.STANDARD_PACKAGE_LIST_FILE' <<< "$CELL")"
-          "COLDFRONT_PACKAGE_LIST_FILE=$(jq -r '.package_list_args.COLDFRONT_PACKAGE_LIST_FILE' <<< "$CELL")"
           "TARGET=${target}"
           "TAG=${REPO}"
         )
-        case "$target" in
-          standard)  [[ -n "$parent" ]] && envs+=("MINIMAL_IMAGE=${REPO}:${parent}") ;;
-          coldfront) [[ -n "$parent" ]] && envs+=("STANDARD_IMAGE=${REPO}:${parent}") ;;
-        esac
+        while IFS= read -r kv; do
+          envs+=("$kv")
+        done < <(jq -r '.package_list_args | to_entries[] | "\(.key)=\(.value)"' <<< "$CELL")
+
+        # A chained flavor starts FROM the image the previous wave published.
+        parent_arg=$(jq -r '.parent_image_arg' <<< "$CELL")
+        if [[ -n "$parent" && -n "$parent_arg" ]]; then
+          envs+=("${parent_arg}=${REPO}:${parent}")
+        fi
 
         env "${envs[@]}" docker buildx bake "${args[@]}"
 
