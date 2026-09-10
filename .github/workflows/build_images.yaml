@@ -72,6 +72,8 @@ jobs:
     name: Plan waves
     runs-on: ubuntu-24.04
     outputs:
+      postgres_build: ${{ steps.matrix.outputs.postgres_build }}
+      postgres_merge: ${{ steps.matrix.outputs.postgres_merge }}
       minimal_build: ${{ steps.matrix.outputs.minimal_build }}
       minimal_merge: ${{ steps.matrix.outputs.minimal_merge }}
       standard_build: ${{ steps.matrix.outputs.standard_build }}
@@ -101,7 +103,7 @@ jobs:
         run: |
           set -o errexit -o pipefail
           PGEDGE_EMIT_MATRIX=1 ./scripts/build_pgedge_images.py > waves.json
-          for flavor in minimal standard coldfront; do
+          for flavor in postgres minimal standard coldfront; do
             for kind in build merge; do
               value=$(python3 -c "import json;print(json.dumps(json.load(open('waves.json'))['$flavor']['$kind']))")
               echo "${flavor}_${kind}=${value}" >> "$GITHUB_OUTPUT"
@@ -111,10 +113,68 @@ jobs:
       - name: Show the plan
         run: python3 -m json.tool waves.json
 
+  build-postgres:
+    name: "postgres ${{ matrix.cell.name }}"
+    needs: [plan]
+    if: ${{ fromJSON(needs.plan.outputs.postgres_build)[0] != null }}
+    runs-on: ${{ matrix.cell.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.postgres_build) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Build and push by digest
+        uses: ./.github/actions/build-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+          no_cache: ${{ inputs.pgedge_image_no_cache }}
+
+  merge-postgres:
+    name: "merge postgres ${{ matrix.cell.name }}"
+    # An empty matrix skips a job, and a skipped "needs" fails the implicit
+    # success() of everything downstream. So each job below lists its whole
+    # upstream chain and blocks only on a real failure. Every upstream job is
+    # named rather than just the previous one, because a failure reaches the
+    # next job as a *skip*: checking only the immediate predecessor would let a
+    # later wave build on top of a broken earlier one.
+    needs: [plan, build-postgres]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && fromJSON(needs.plan.outputs.postgres_merge)[0] != null }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.postgres_merge) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Merge, sign and tag
+        uses: ./.github/actions/merge-flavor
+        with:
+          cell: ${{ toJSON(matrix.cell) }}
+          repo: ${{ inputs.pgedge_image_repo }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: ${{ inputs.pgedge_image_dry_run }}
+
   build-minimal:
     name: "minimal ${{ matrix.cell.name }}"
-    needs: [plan]
-    if: ${{ fromJSON(needs.plan.outputs.minimal_build)[0] != null }}
+    needs: [plan, build-postgres, merge-postgres]
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
+          && fromJSON(needs.plan.outputs.minimal_build)[0] != null }}
     runs-on: ${{ matrix.cell.runner }}
     strategy:
       fail-fast: false
@@ -135,16 +195,12 @@ jobs:
 
   merge-minimal:
     name: "merge minimal ${{ matrix.cell.name }}"
-    # An empty matrix skips a job, and a skipped "needs" fails the implicit
-    # success() of everything downstream. So each job below lists its whole
-    # upstream chain and blocks only on a real failure. Every upstream job is
-    # named rather than just the previous one, because a failure reaches the
-    # next job as a *skip*: checking only the immediate predecessor would let a
-    # later wave build on top of a broken earlier one.
-    needs: [plan, build-minimal]
+    needs: [plan, build-postgres, merge-postgres, build-minimal]
     if: >-
       ${{ !cancelled()
           && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
           && needs.build-minimal.result != 'failure'
           && fromJSON(needs.plan.outputs.minimal_merge)[0] != null }}
     runs-on: ubuntu-24.04
@@ -166,10 +222,12 @@ jobs:
 
   build-standard:
     name: "standard ${{ matrix.cell.name }}"
-    needs: [plan, build-minimal, merge-minimal]
+    needs: [plan, build-postgres, merge-postgres, build-minimal, merge-minimal]
     if: >-
       ${{ !cancelled()
           && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
           && needs.build-minimal.result != 'failure'
           && needs.merge-minimal.result != 'failure'
           && fromJSON(needs.plan.outputs.standard_build)[0] != null }}
@@ -193,10 +251,12 @@ jobs:
 
   merge-standard:
     name: "merge standard ${{ matrix.cell.name }}"
-    needs: [plan, build-minimal, merge-minimal, build-standard]
+    needs: [plan, build-postgres, merge-postgres, build-minimal, merge-minimal, build-standard]
     if: >-
       ${{ !cancelled()
           && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
           && needs.build-minimal.result != 'failure'
           && needs.merge-minimal.result != 'failure'
           && needs.build-standard.result != 'failure'
@@ -218,13 +278,15 @@ jobs:
           registry_token: ${{ secrets.GITHUB_TOKEN }}
           dry_run: ${{ inputs.pgedge_image_dry_run }}
 
-  # A failure here leaves this run's minimal and standard images published.
+  # A failure here leaves this run's earlier flavors published.
   build-coldfront:
     name: "coldfront ${{ matrix.cell.name }}"
-    needs: [plan, build-minimal, merge-minimal, build-standard, merge-standard]
+    needs: [plan, build-postgres, merge-postgres, build-minimal, merge-minimal, build-standard, merge-standard]
     if: >-
       ${{ !cancelled()
           && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
           && needs.build-minimal.result != 'failure'
           && needs.merge-minimal.result != 'failure'
           && needs.build-standard.result != 'failure'
@@ -250,10 +312,12 @@ jobs:
 
   merge-coldfront:
     name: "merge coldfront ${{ matrix.cell.name }}"
-    needs: [plan, build-minimal, merge-minimal, build-standard, merge-standard, build-coldfront]
+    needs: [plan, build-postgres, merge-postgres, build-minimal, merge-minimal, build-standard, merge-standard, build-coldfront]
     if: >-
       ${{ !cancelled()
           && needs.plan.result == 'success'
+          && needs.build-postgres.result != 'failure'
+          && needs.merge-postgres.result != 'failure'
           && needs.build-minimal.result != 'failure'
           && needs.merge-minimal.result != 'failure'
           && needs.build-standard.result != 'failure'

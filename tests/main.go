@@ -27,8 +27,15 @@ type Test struct {
 	Name           string
 	Cmd            string
 	ExpectedOutput func(exitCode int, output string) error
+	MinimalOnly    bool // Only run on minimal-or-later (needs the pgEdge extensions)
 	StandardOnly   bool // Only run on standard-or-later flavors (standard, coldfront)
 	ColdfrontOnly  bool // Only run on the coldfront flavor
+}
+
+// includesMinimal reports whether a flavor ships the pgEdge extensions minimal
+// adds. postgres, the bare server, does not.
+func includesMinimal(flavor string) bool {
+	return flavor == "minimal" || includesStandard(flavor)
 }
 
 // includesStandard reports whether a flavor ships everything standard does.
@@ -108,20 +115,20 @@ func spockMajorFromImage(image string) string {
 
 func parseFlags() (string, string) {
 	image := flag.String("image", "", "Docker image to test (required)")
-	flavor := flag.String("flavor", "", "Image flavor: minimal, standard or coldfront (required)")
+	flavor := flag.String("flavor", "", "Image flavor: postgres, minimal, standard or coldfront (required)")
 	flag.Parse()
 
 	if *image == "" || *flavor == "" {
-		fmt.Println("Usage: go run main.go -image <image> -flavor <minimal|standard|coldfront>")
+		fmt.Println("Usage: go run main.go -image <image> -flavor <postgres|minimal|standard|coldfront>")
 		fmt.Println()
 		fmt.Println("Arguments:")
 		fmt.Println("  -image   Docker image to test (e.g., ghcr.io/pgedge/pgedge-postgres:17-spock5-standard)")
-		fmt.Println("  -flavor  Image flavor: 'minimal', 'standard' or 'coldfront'")
+		fmt.Println("  -flavor  Image flavor: 'postgres', 'minimal', 'standard' or 'coldfront'")
 		os.Exit(1)
 	}
 
-	if *flavor != "minimal" && !includesStandard(*flavor) {
-		log.Fatalf("Invalid flavor '%s'. Must be 'minimal', 'standard' or 'coldfront'", *flavor)
+	if *flavor != "postgres" && !includesMinimal(*flavor) {
+		log.Fatalf("Invalid flavor '%s'. Must be 'postgres', 'minimal', 'standard' or 'coldfront'", *flavor)
 	}
 
 	return *image, *flavor
@@ -206,6 +213,9 @@ func printSummary(errorCount int, flavor, spockMajor string) {
 	tests := buildTestSuite(spockMajor)
 	extensionTests := 0
 	for _, t := range tests {
+		if t.MinimalOnly && !includesMinimal(flavor) {
+			continue
+		}
 		if t.StandardOnly && !includesStandard(flavor) {
 			continue
 		}
@@ -418,7 +428,10 @@ func (r *TestRunner) Start() error {
 	// Build shared_preload_libraries based on flavor
 	// These extensions require preloading before they can be used
 	// Note: We only include extensions that are guaranteed to be in all images
-	sharedLibs := "spock,snowflake"
+	sharedLibs := ""
+	if includesMinimal(r.flavor) {
+		sharedLibs = "spock,snowflake"
+	}
 	if includesStandard(r.flavor) {
 		sharedLibs = "spock,snowflake,pgaudit,supautils"
 	}
@@ -438,7 +451,11 @@ func (r *TestRunner) Start() error {
 		"-c", "track_commit_timestamp=on",
 		"-c", "max_replication_slots=10",
 		"-c", "max_wal_senders=10",
-		"-c", "snowflake.node=1",
+	}
+	// snowflake.node exists only once that extension is preloaded; passing it to
+	// the bare server makes the postmaster refuse to start.
+	if includesMinimal(r.flavor) {
+		cmd = append(cmd, "-c", "snowflake.node=1")
 	}
 
 	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
@@ -646,6 +663,9 @@ func (r *TestRunner) RunTests(tests []Test) int {
 
 	for _, test := range tests {
 		// Skip standard-only tests for minimal flavor
+		if test.MinimalOnly && !includesMinimal(r.flavor) {
+			continue
+		}
 		if test.StandardOnly && !includesStandard(r.flavor) {
 			continue
 		}
@@ -699,8 +719,9 @@ func getSpockVersionTests(spockMajor string) []Test {
 	}
 	return []Test{
 		{
-			Name: fmt.Sprintf("Spock extension major version is %s", spockMajor),
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT extversion FROM pg_extension WHERE extname = 'spock';\"",
+			Name:        fmt.Sprintf("Spock extension major version is %s", spockMajor),
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT extversion FROM pg_extension WHERE extname = 'spock';\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -753,12 +774,14 @@ func getCommonExtensionTests() []Test {
 	return []Test{
 		{
 			Name:           "Spock extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS spock; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "Spock subscription table accessible",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT count(*) FROM spock.subscription;\"",
+			Name:        "Spock subscription table accessible",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT count(*) FROM spock.subscription;\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -771,12 +794,14 @@ func getCommonExtensionTests() []Test {
 		},
 		{
 			Name:           "LOLOR extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS lolor; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "LOLOR lo_create works",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT lo_create(200000);\"",
+			Name:        "LOLOR lo_create works",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT lo_create(200000);\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -789,12 +814,14 @@ func getCommonExtensionTests() []Test {
 		},
 		{
 			Name:           "Snowflake extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS snowflake; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "Snowflake ID generation works",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT snowflake.nextval() > 0;\"",
+			Name:        "Snowflake ID generation works",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT snowflake.nextval() > 0;\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)

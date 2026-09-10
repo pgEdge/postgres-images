@@ -38,18 +38,22 @@ class Config:
 # chained flavor in one graph also runs every ancestor's stage, and each stage
 # consumes its own packagelist ARG, so build() has to pass the whole ancestry --
 # see PgEdgeImage.package_list_args.
-FLAVOR_PARENTS = {"standard": "minimal", "coldfront": "standard"}
+FLAVOR_PARENTS = {"minimal": "postgres", "standard": "minimal", "coldfront": "standard"}
+
+# Built once per major and shared by every spock line: a "-spock…-postgres" tag
+# would claim a version the image does not contain.
+SPOCK_INDEPENDENT_FLAVORS = {"postgres"}
 
 # The Dockerfile ARG each flavor's stage reads its packagelist from.
 FLAVOR_LIST_ARGS = {
+    "postgres": "POSTGRES_PACKAGE_LIST_FILE",
     "minimal": "PACKAGE_LIST_FILE",
     "standard": "STANDARD_PACKAGE_LIST_FILE",
     "coldfront": "COLDFRONT_PACKAGE_LIST_FILE",
 }
 
-# Flavors built for every image. coldfront is deliberately absent: ColdFront's
-# cold-write protocol is validated against spock 5 only, so it is opted in per
-# image rather than fanned out over the whole matrix.
+# Flavors built for every spock line. coldfront is opted in per image (its
+# protocol is validated against spock 5 only); postgres is listed once per major.
 DEFAULT_FLAVORS = ["minimal", "standard"]
 
 
@@ -91,10 +95,13 @@ class PgEdgeImage:
 
     @property
     def spock_major(self) -> str:
-        return self.spock_version.split(".")[0]
+        return self.spock_version.split(".")[0] if self.spock_version else ""
 
     def _package_list_for(self, flavor: str) -> str:
-        filename = f"pg{self.postgres_version}-spock{self.spock_version}"
+        filename = f"pg{self.postgres_version}"
+
+        if flavor not in SPOCK_INDEPENDENT_FLAVORS:
+            filename += f"-spock{self.spock_version}"
 
         if flavor:
             filename += f"-{flavor}"
@@ -119,7 +126,9 @@ class PgEdgeImage:
             Tag(
                 postgres_version=self.postgres_version,
                 flavor=parent,
-                spock_version=self.spock_version,
+                spock_version=(
+                    "" if parent in SPOCK_INDEPENDENT_FLAVORS else self.spock_version
+                ),
                 epoch=self.epoch,
             )
         )
@@ -168,7 +177,7 @@ class PgEdgeImage:
             )
         ]
 
-        if self.is_latest_for_spock_major:
+        if self.is_latest_for_spock_major and self.spock_version:
             # Mutable tag without spock minor/patch and epoch
             tags.append(
                 Tag(
@@ -187,6 +196,8 @@ class PgEdgeImage:
                         spock_version=self.spock_major,
                     )
                 )
+        elif not self.spock_version and self.is_latest_for_pg_major:
+            tags.append(Tag(postgres_version=self.postgres_major, flavor=self.flavor))
 
         return tags
 
@@ -224,6 +235,19 @@ def make_all_flavor_images(
 # This is the list of all images that this script will build. Any new images should be
 # added to this list.
 all_images: list[PgEdgeImage] = [
+    # PostgreSQL-only base, one per major; no spock segment.
+    PgEdgeImage(
+        postgres_version="16.15", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
+    PgEdgeImage(
+        postgres_version="17.11", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
+    PgEdgeImage(
+        postgres_version="18.6", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
     # pg16 images
     *make_all_flavor_images(
         postgres_version="16.15",
@@ -282,7 +306,7 @@ all_images: list[PgEdgeImage] = [
 # QEMU on an amd64 host: emulated dnf transactions dominate the build time.
 ARCH_RUNNERS = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
 
-FLAVOR_WAVES = ["minimal", "standard", "coldfront"]
+FLAVOR_WAVES = ["postgres", "minimal", "standard", "coldfront"]
 
 
 def emit_matrix(config: "Config") -> None:
@@ -475,7 +499,13 @@ def _log_config(config: "Config") -> None:
 def _should_skip_image(image: "PgEdgeImage", config: "Config") -> bool:
     if config.only_postgres_version and image.postgres_version != config.only_postgres_version:
         return True
-    if config.only_spock_version and image.spock_version != config.only_spock_version:
+    # Every spock line depends on the spock-independent base, so a spock filter
+    # must not exclude it.
+    if (
+        config.only_spock_version
+        and image.spock_version
+        and image.spock_version != config.only_spock_version
+    ):
         return True
     return False
 
