@@ -326,6 +326,8 @@ def emit_matrix(config: "Config") -> None:
     for flavor in FLAVOR_WAVES:
         builds: list[dict] = []
         merges: list[dict] = []
+        # Job label. A spock-independent flavor has no spock version to name.
+        cell = "{major}" if flavor in SPOCK_INDEPENDENT_FLAVORS else "{major}-spock{spock}"
 
         for image in all_images:
             if image.flavor != flavor or _should_skip_image(image, config):
@@ -339,7 +341,9 @@ def emit_matrix(config: "Config") -> None:
 
             merges.append(
                 {
-                    "name": f"{image.postgres_major}-spock{image.spock_major}",
+                    "name": cell.format(
+                        major=image.postgres_major, spock=image.spock_major
+                    ),
                     "build_tag": str(image.build_tag),
                     "extra_tags": [str(t) for t in image.extra_tags],
                     "arches": arches,
@@ -353,7 +357,10 @@ def emit_matrix(config: "Config") -> None:
             for arch in arches:
                 builds.append(
                     {
-                        "name": f"{image.postgres_major}-spock{image.spock_major}-{arch}",
+                        "name": cell.format(
+                            major=image.postgres_major, spock=image.spock_major
+                        )
+                        + f"-{arch}",
                         "runner": ARCH_RUNNERS[arch],
                         "arch": arch,
                         "target": flavor,
