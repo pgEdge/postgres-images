@@ -33,10 +33,18 @@ fastestmirror=1
 max_parallel_downloads=10
 CONF
 
-dnf install -y epel-release dnf
+# EPEL mirrors lag behind its repomd.xml, so a repodata file can 404 on every
+# mirror at once -- failover cannot help. Clearing metadata re-resolves to a
+# repomd the mirrors actually have.
+retry() {
+    for _ in 1 2 3; do "$@" && return 0; dnf clean metadata; sleep 5; done
+    return 1
+}
+
+retry dnf install -y epel-release dnf
 dnf config-manager --set-enabled crb
-dnf update -y --allowerasing
-dnf install -y https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+retry dnf update -y --allowerasing
+retry dnf install -y https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
 if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
