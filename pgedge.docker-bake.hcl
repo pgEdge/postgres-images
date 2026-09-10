@@ -24,6 +24,11 @@ variable "PACKAGE_LIST_FILE" {
 // Every stage in the chain needs its own packagelist variable. A chained flavor
 // still triggers its ancestors' stages, and each of those consumes its own ARG,
 // so one shared variable would make an ancestor install a descendant's list.
+variable "POSTGRES_PACKAGE_LIST_FILE" {
+  type    = string
+  default = ""
+}
+
 variable "STANDARD_PACKAGE_LIST_FILE" {
   type    = string
   default = ""
@@ -38,6 +43,11 @@ variable "COLDFRONT_PACKAGE_LIST_FILE" {
 // default (the parent stage), which is the single-graph build. A registry
 // reference switches that stage to start from an already-published image, which
 // is what a per-flavor CI wave needs.
+variable "POSTGRES_IMAGE" {
+  type    = string
+  default = "postgres"
+}
+
 variable "MINIMAL_IMAGE" {
   type    = string
   default = "minimal"
@@ -59,9 +69,11 @@ target "default" {
   tags    = [TAG]
   args = {
     PACKAGE_RELEASE_CHANNEL     = PACKAGE_RELEASE_CHANNEL
+    POSTGRES_PACKAGE_LIST_FILE  = POSTGRES_PACKAGE_LIST_FILE
     PACKAGE_LIST_FILE           = PACKAGE_LIST_FILE
     STANDARD_PACKAGE_LIST_FILE  = STANDARD_PACKAGE_LIST_FILE
     COLDFRONT_PACKAGE_LIST_FILE = COLDFRONT_PACKAGE_LIST_FILE
+    POSTGRES_IMAGE              = POSTGRES_IMAGE
     MINIMAL_IMAGE               = MINIMAL_IMAGE
     STANDARD_IMAGE              = STANDARD_IMAGE
     POSTGRES_MAJOR_VERSION      = POSTGRES_MAJOR_VERSION
