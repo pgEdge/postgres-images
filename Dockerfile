@@ -137,22 +137,11 @@ RUN install --verbose --directory --owner postgres --group postgres --mode 1777 
 # rather than a runtime mount: supautils reads these from a plain
 # filesystem path with no other configuration hook available. See
 # extension-custom-scripts/README.md for the convention new scripts
-# follow.
+# follow, including the before-create.sql role check every gated
+# extension carries now that supautils.privileged_role is enforced
+# via extension_custom_scripts_path rather than being an emergent
+# property of whose session happens to load supautils.
 COPY --chown=postgres:postgres extension-custom-scripts /etc/pgedge/extension-custom-scripts
-
-# lolor ships trusted=true, so any role with CREATE on its own schema
-# can install it directly, bypassing supautils entirely (its
-# extension_custom_scripts_path hook only ever runs for a session that
-# goes through supautils, never for a plain trusted install). lolor's
-# install script also renames core Postgres large-object functions in
-# place, immediately breaking lo_create()/lo_open() database-wide if
-# spock isn't already installed, with no self-service recovery. Flip
-# it to trusted=false here so installing it always requires going
-# through the gate (see supautils.privileged_extensions in the
-# Cluster CR), which is what makes extension-custom-scripts/lolor/
-# before-create.sql's spock check reliably run on every install path.
-RUN sed -i 's/^trusted = true$/trusted = false/' \
-    "/usr/pgsql-${POSTGRES_MAJOR_VERSION}/share/extension/lolor.control"
 
 USER postgres
 

@@ -27,15 +27,20 @@ so the grant keeps working even if that database is later reassigned
 to a different owner, and needs no assumption about what the owner is
 named. See `pg_cron`'s `after-create.sql` for the pattern.
 
-A script here only runs in a session that has `supautils` loaded,
-which in practice means a session installing a privileged
-(allowlisted, superuser-switched) extension. It is the wrong place for
-a check that must hold regardless of role or session: a trusted
-extension can be installed directly, with no privileged session (and
-so no `supautils`) involved at all. `lolor` needs exactly this kind of
-check (see its own `before-create.sql`), which only reliably runs
-because its control file is patched to `trusted = false` in the
-Dockerfile, forcing every install through the gate. A future script
-with the same need should do the same: fix the extension's own trust
-flag first, don't rely on a script here alone to catch a path that
-never goes through `supautils` in the first place.
+A script here only runs in a session that has `supautils` loaded.
+Every privileged (allowlisted) extension's `before-create.sql` checks
+`session_user` against `supautils.privileged_role` directly, rather
+than relying on only the privileged role's session ever loading
+`supautils` in the first place: `supautils.privileged_extensions`
+itself has no concept of "who is asking", it only checks the
+extension name, so restricting installs to one role has always
+depended on `supautils` being loaded cluster-wide
+(`shared_preload_libraries`) and this check being the thing that
+actually enforces who gets to use it, not session scoping.
+
+`session_user` stays the role that actually authenticated for the
+whole session, even once supautils switches the acting role to
+install the extension, so the check holds regardless of that
+elevation. See `postgis/before-create.sql` for the plain case and
+`lolor/before-create.sql` for one that layers an extension-specific
+requirement on top of the same role check.
