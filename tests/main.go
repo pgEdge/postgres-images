@@ -178,6 +178,19 @@ func runEntrypointTests(runner *DefaultEntrypointRunner, flavor string) int {
 		fmt.Println()
 	}
 
+	// Phase 2b: ColdFront's wrapper around that entrypoint
+	if flavor == "coldfront" {
+		printPhaseHeader("Phase 2b: ColdFront Entrypoint Test")
+		if err := runner.TestColdfrontEntrypoint(); err != nil {
+			errorCount++
+			fmt.Printf("  ColdFront entrypoint test                              ❌\n")
+			log.Printf("    Error: %v", err)
+		} else {
+			fmt.Printf("  ColdFront entrypoint test                              ✅\n")
+		}
+		fmt.Println()
+	}
+
 	return errorCount
 }
 
@@ -360,6 +373,92 @@ patroni /tmp/patroni.yml`, patroniConfig)
 		return "", fmt.Errorf("error creating container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// TestColdfrontEntrypoint starts the image the way an operator passing server
+// options does -- a leading "-c" rather than an explicit "postgres" -- and with
+// a space in the role and database names, so both ways the wrapper can lose
+// ColdFront's settings are covered.
+func (r *DefaultEntrypointRunner) TestColdfrontEntrypoint() error {
+	const (
+		user = "cf user"
+		db   = "cf db"
+	)
+
+	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
+		Image: r.image,
+		Env: []string{
+			"POSTGRES_PASSWORD=testpassword",
+			"POSTGRES_USER=" + user,
+			"POSTGRES_DB=" + db,
+			"COLDFRONT_WAREHOUSE=wh",
+		},
+		// docker-entrypoint.sh only turns this into "postgres -c ..." after the
+		// ColdFront wrapper has run, so the wrapper has to normalise it itself.
+		Cmd: []string{"-c", "work_mem=8MB"},
+	}, &container.HostConfig{}, nil, nil, "")
+	if err != nil {
+		return fmt.Errorf("error creating container: %w", err)
+	}
+	defer r.cleanupContainer(resp.ID)
+
+	if err := r.cli.ContainerStart(r.ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("error starting container: %w", err)
+	}
+
+	psql := func(sql string) (string, error) {
+		exitCode, out, err := execInContainer(r.cli, r.ctx, resp.ID,
+			[]string{"psql", "-U", user, "-d", db, "-X", "-t", "-A", "-c", sql})
+		if err != nil {
+			return "", err
+		}
+		if exitCode != 0 {
+			return "", fmt.Errorf("psql exited %d: %s", exitCode, strings.TrimSpace(out))
+		}
+		return strings.TrimSpace(out), nil
+	}
+
+	// A real query, not pg_isready: initdb's own bootstrap server answers before
+	// the postmaster this test is about is listening.
+	ready := false
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+		if _, err := psql("SELECT 1"); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !ready {
+		return fmt.Errorf("timeout waiting for PostgreSQL to be ready")
+	}
+
+	checks := []struct {
+		name, sql, want string
+	}{
+		// Present only if the leading option did not bypass the wrapper.
+		{"shared_preload_libraries", "SHOW shared_preload_libraries", "pg_duckdb,coldfront"},
+		// The operator's own argument is appended last and still wins.
+		{"work_mem", "SHOW work_mem", "8MB"},
+		{"coldfront.warehouse", "SHOW coldfront.warehouse", "wh"},
+		// Spaces have to be quoted, not split into further libpq keywords.
+		{"coldfront.local_pg_dsn", "SHOW coldfront.local_pg_dsn",
+			"host='/var/run/postgresql' dbname='" + db + "' user='" + user + "' application_name=coldfront_pglocal"},
+	}
+	for _, c := range checks {
+		got, err := psql(c.sql)
+		if err != nil {
+			return fmt.Errorf("%s: %w", c.name, err)
+		}
+		if got != c.want {
+			return fmt.Errorf("%s = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// Connects back over that DSN, which a value split on its spaces could not do.
+	if _, err := psql("CREATE EXTENSION IF NOT EXISTS coldfront CASCADE; SELECT coldfront.ensure_pg_attached()"); err != nil {
+		return fmt.Errorf("ensure_pg_attached: %w", err)
+	}
+	return nil
 }
 
 func (r *DefaultEntrypointRunner) cleanupContainer(containerID string) {
@@ -629,7 +728,13 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 		return -1, "", fmt.Errorf("empty command")
 	}
 
-	execID, err := r.cli.ContainerExecCreate(r.ctx, r.containerID, container.ExecOptions{
+	return execInContainer(r.cli, r.ctx, r.containerID, cmdArgs)
+}
+
+// execInContainer runs an already-parsed argv in a container and returns its
+// exit code with stdout and stderr interleaved.
+func execInContainer(cli *client.Client, ctx context.Context, containerID string, cmdArgs []string) (int, string, error) {
+	execID, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmdArgs,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -638,19 +743,18 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 		return -1, "", fmt.Errorf("error creating exec: %w", err)
 	}
 
-	resp, err := r.cli.ContainerExecAttach(r.ctx, execID.ID, container.ExecAttachOptions{})
+	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return -1, "", fmt.Errorf("error attaching to exec: %w", err)
 	}
 	defer resp.Close()
 
 	var outputBuf bytes.Buffer
-	_, err = stdcopy.StdCopy(&outputBuf, &outputBuf, resp.Reader)
-	if err != nil {
+	if _, err := stdcopy.StdCopy(&outputBuf, &outputBuf, resp.Reader); err != nil {
 		return -1, "", fmt.Errorf("error copying output: %w", err)
 	}
 
-	inspectResp, err := r.cli.ContainerExecInspect(r.ctx, execID.ID)
+	inspectResp, err := cli.ContainerExecInspect(ctx, execID.ID)
 	if err != nil {
 		return -1, "", fmt.Errorf("error inspecting exec: %w", err)
 	}
