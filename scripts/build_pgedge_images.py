@@ -34,6 +34,37 @@ class Config:
         )
 
 
+# Flavors that are built FROM another flavor rather than FROM base. Building a
+# chained flavor in one graph also runs every ancestor's stage, and each stage
+# consumes its own packagelist ARG, so build() has to pass the whole ancestry --
+# see PgEdgeImage.package_list_args.
+FLAVOR_PARENTS = {"minimal": "postgres", "standard": "minimal", "coldfront": "standard"}
+
+# Built once per major and shared by every spock line: a "-spock…-postgres" tag
+# would claim a version the image does not contain.
+SPOCK_INDEPENDENT_FLAVORS = {"postgres"}
+
+# The Dockerfile ARG that selects what a chained flavor is built FROM. Emitted
+# with each cell so the workflow never has to know these names.
+FLAVOR_IMAGE_ARGS = {
+    "minimal": "POSTGRES_IMAGE",
+    "standard": "MINIMAL_IMAGE",
+    "coldfront": "STANDARD_IMAGE",
+}
+
+# The Dockerfile ARG each flavor's stage reads its packagelist from.
+FLAVOR_LIST_ARGS = {
+    "postgres": "POSTGRES_PACKAGE_LIST_FILE",
+    "minimal": "PACKAGE_LIST_FILE",
+    "standard": "STANDARD_PACKAGE_LIST_FILE",
+    "coldfront": "COLDFRONT_PACKAGE_LIST_FILE",
+}
+
+# Flavors built for every spock line. coldfront is opted in per image (its
+# protocol is validated against spock 5 only); postgres is listed once per major.
+DEFAULT_FLAVORS = ["minimal", "standard"]
+
+
 @dataclass
 class Tag:
     postgres_version: str
@@ -72,16 +103,66 @@ class PgEdgeImage:
 
     @property
     def spock_major(self) -> str:
-        return self.spock_version.split(".")[0]
+        return self.spock_version.split(".")[0] if self.spock_version else ""
+
+    def _package_list_for(self, flavor: str) -> str:
+        filename = f"pg{self.postgres_version}"
+
+        if flavor not in SPOCK_INDEPENDENT_FLAVORS:
+            filename += f"-spock{self.spock_version}"
+
+        if flavor:
+            filename += f"-{flavor}"
+
+        return filename + ".txt"
 
     @property
     def package_list(self) -> str:
-        filename = f"pg{self.postgres_version}-spock{self.spock_version}"
+        return self._package_list_for(self.flavor)
 
-        if self.flavor:
-            filename += f"-{self.flavor}"
+    @property
+    def parent_build_tag(self) -> str:
+        """Immutable tag of the flavor this one is chained FROM, or "" if none.
 
-        return filename + ".txt"
+        The per-flavor wave model builds each flavor FROM the image the previous
+        wave published, so the stage is never rebuilt on a different runner.
+        """
+        parent = FLAVOR_PARENTS.get(self.flavor)
+        if not parent:
+            return ""
+        return str(
+            Tag(
+                postgres_version=self.postgres_version,
+                flavor=parent,
+                spock_version=(
+                    "" if parent in SPOCK_INDEPENDENT_FLAVORS else self.spock_version
+                ),
+                epoch=self.epoch,
+            )
+        )
+
+    @property
+    def ancestry(self) -> list[str]:
+        """This flavor and every flavor it is chained FROM, base-most first."""
+        chain = [self.flavor]
+        while FLAVOR_PARENTS.get(chain[0]):
+            chain.insert(0, FLAVOR_PARENTS[chain[0]])
+        return chain
+
+    @property
+    def package_list_args(self) -> dict[str, str]:
+        """One packagelist build-arg per stage in this image's ancestry.
+
+        A single-graph build of a chained flavor runs its ancestors' stages too,
+        and each reads its own ARG, so all of them have to be supplied. Args for
+        flavors outside the ancestry are sent empty so bake does not carry a
+        stale value over from another image.
+        """
+        chain = self.ancestry
+        return {
+            arg: (self._package_list_for(flavor) if flavor in chain else "")
+            for flavor, arg in FLAVOR_LIST_ARGS.items()
+        }
 
     @property
     def build_tag(self) -> Tag:
@@ -104,7 +185,7 @@ class PgEdgeImage:
             )
         ]
 
-        if self.is_latest_for_spock_major:
+        if self.is_latest_for_spock_major and self.spock_version:
             # Mutable tag without spock minor/patch and epoch
             tags.append(
                 Tag(
@@ -123,6 +204,8 @@ class PgEdgeImage:
                         spock_version=self.spock_major,
                     )
                 )
+        elif not self.spock_version and self.is_latest_for_pg_major:
+            tags.append(Tag(postgres_version=self.postgres_major, flavor=self.flavor))
 
         return tags
 
@@ -138,9 +221,10 @@ def make_all_flavor_images(
     is_latest_for_pg_major: bool = False,
     is_latest_for_spock_major: bool = False,
     package_release_channel: str = "",
+    flavors: list[str] = None,
 ) -> list[PgEdgeImage]:
     images: list[PgEdgeImage] = []
-    for flavor in ["minimal", "standard"]:
+    for flavor in flavors if flavors is not None else DEFAULT_FLAVORS:
         images.append(
             PgEdgeImage(
                 postgres_version=postgres_version,
@@ -159,6 +243,19 @@ def make_all_flavor_images(
 # This is the list of all images that this script will build. Any new images should be
 # added to this list.
 all_images: list[PgEdgeImage] = [
+    # PostgreSQL-only base, one per major; no spock segment.
+    PgEdgeImage(
+        postgres_version="16.15", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
+    PgEdgeImage(
+        postgres_version="17.11", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
+    PgEdgeImage(
+        postgres_version="18.6", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
     # pg16 images
     *make_all_flavor_images(
         postgres_version="16.15",
@@ -166,6 +263,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg17 images
     *make_all_flavor_images(
@@ -174,6 +272,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg18 images
     *make_all_flavor_images(
@@ -182,6 +281,7 @@ all_images: list[PgEdgeImage] = [
         epoch=2,
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
+        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg16 spock60 images
     *make_all_flavor_images(
@@ -208,6 +308,82 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_spock_major=True,
     ),
 ]
+
+
+# Runner label per architecture. arm64 builds go to a native runner rather than
+# QEMU on an amd64 host: emulated dnf transactions dominate the build time.
+ARCH_RUNNERS = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+
+FLAVOR_WAVES = ["postgres", "minimal", "standard", "coldfront"]
+
+
+def emit_matrix(config: "Config") -> None:
+    """Print the per-wave build and merge matrices as JSON.
+
+    The workflow consumes this instead of hardcoding the cell list, so the
+    matrix and the image definitions above cannot drift apart.
+
+    An image whose immutable tag is already published is left out of the build
+    matrix unless republish is set, but stays in the merge matrix with
+    needs_build false, so a re-dispatch repairs its mutable tags without
+    rebuilding anything.
+    """
+    arches = [config.only_arch] if config.only_arch else list(ARCH_RUNNERS)
+    waves: dict = {}
+
+    for flavor in FLAVOR_WAVES:
+        builds: list[dict] = []
+        merges: list[dict] = []
+        # Job label. A spock-independent flavor has no spock version to name.
+        cell = "{major}" if flavor in SPOCK_INDEPENDENT_FLAVORS else "{major}-spock{spock}"
+
+        for image in all_images:
+            if image.flavor != flavor or _should_skip_image(image, config):
+                continue
+
+            needs_build = config.republish or not published_digests(
+                config.repo, image.build_tag
+            )
+            if not needs_build:
+                logging.info(f"{image.build_tag} is already published")
+
+            merges.append(
+                {
+                    "name": cell.format(
+                        major=image.postgres_major, spock=image.spock_major
+                    ),
+                    "build_tag": str(image.build_tag),
+                    "extra_tags": [str(t) for t in image.extra_tags],
+                    "arches": arches,
+                    "needs_build": needs_build,
+                }
+            )
+
+            if not needs_build:
+                continue
+
+            for arch in arches:
+                builds.append(
+                    {
+                        "name": cell.format(
+                            major=image.postgres_major, spock=image.spock_major
+                        )
+                        + f"-{arch}",
+                        "runner": ARCH_RUNNERS[arch],
+                        "arch": arch,
+                        "target": flavor,
+                        "build_tag": str(image.build_tag),
+                        "postgres_major": image.postgres_major,
+                        "package_release_channel": image.package_release_channel,
+                        "parent_build_tag": image.parent_build_tag,
+                        "parent_image_arg": FLAVOR_IMAGE_ARGS.get(flavor, ""),
+                        "package_list_args": image.package_list_args,
+                    }
+                )
+
+        waves[flavor] = {"build": builds, "merge": merges}
+
+    print(json.dumps(waves))
 
 
 def validate_images(images: list[PgEdgeImage]):
@@ -284,7 +460,7 @@ def build(
             **os.environ.copy(),
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
             "POSTGRES_MAJOR_VERSION": image.postgres_major,
-            "PACKAGE_LIST_FILE": image.package_list,
+            **image.package_list_args,
             "TAG": f"{repo}:{image.build_tag}",
             "TARGET": image.flavor,
         },
@@ -339,7 +515,13 @@ def _log_config(config: "Config") -> None:
 def _should_skip_image(image: "PgEdgeImage", config: "Config") -> bool:
     if config.only_postgres_version and image.postgres_version != config.only_postgres_version:
         return True
-    if config.only_spock_version and image.spock_version != config.only_spock_version:
+    # Every spock line depends on the spock-independent base, so a spock filter
+    # must not exclude it.
+    if (
+        config.only_spock_version
+        and image.spock_version
+        and image.spock_version != config.only_spock_version
+    ):
         return True
     return False
 
@@ -378,6 +560,11 @@ def main():
 
     if config.list_latest_tags:
         print(",".join(get_latest_tags()))
+        return
+
+    if os.getenv("PGEDGE_EMIT_MATRIX", "0") == "1":
+        validate_images(all_images)
+        emit_matrix(config)
         return
 
     _log_config(config)

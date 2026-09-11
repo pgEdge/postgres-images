@@ -2,6 +2,14 @@
 # base image for all flavors #
 ##############################
 
+# What each chained stage builds FROM. Declared here because an ARG used in a
+# FROM must precede the first FROM. The default names the stage above it, giving
+# one build graph; a registry reference instead starts that stage from an
+# already-published image, which is what a per-flavor CI wave needs.
+ARG POSTGRES_IMAGE=postgres
+ARG MINIMAL_IMAGE=minimal
+ARG STANDARD_IMAGE=standard
+
 FROM rockylinux/rockylinux:9-ubi AS base
 
 ARG PACKAGE_RELEASE_CHANNEL=""
@@ -29,17 +37,19 @@ mkdir /docker-entrypoint-initdb.d
 
 EOF
 
-##########################
-# minimal-flavored image #
-##########################
+#############################
+# PostgreSQL-only base image #
+#############################
+#
+# Spock-independent: built once per major, shared across spock lines.
 
-FROM base AS minimal
+FROM base AS postgres
 
-ARG PACKAGE_LIST_FILE
+ARG POSTGRES_PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
 
-COPY packagelists/${TARGETARCH}/${PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
+COPY packagelists/${TARGETARCH}/${POSTGRES_PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
 RUN <<EOF
 #!/usr/bin/env bash
@@ -94,14 +104,17 @@ EXPOSE 5432
 CMD ["postgres"]
 
 ###########################
-# standard-flavored image #
+# minimal-flavored image  #
 ###########################
 
-FROM base AS standard
+FROM ${POSTGRES_IMAGE} AS minimal
 
 ARG PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
+
+# The inherited stage ends as USER postgres.
+USER root
 
 COPY packagelists/${TARGETARCH}/${PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
@@ -112,6 +125,42 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# A delta: re-pinning a package the parent's "dnf update -y" has moved past
+# would be a downgrade, which dnf refuses.
+xargs dnf install -y < /usr/share/pgedge/packages.txt
+dnf update -y
+dnf clean all
+
+EOF
+
+USER postgres
+
+###########################
+# standard-flavored image #
+###########################
+
+# Chained rather than a second FROM base: that is what makes the inherited
+# layers byte-identical to minimal's -- as parallel stages they shared 1 of 6.
+FROM ${MINIMAL_IMAGE} AS standard
+
+ARG STANDARD_PACKAGE_LIST_FILE
+ARG TARGETARCH
+ARG POSTGRES_MAJOR_VERSION
+
+# The inherited stage ends as USER postgres.
+USER root
+
+COPY packagelists/${TARGETARCH}/${STANDARD_PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
+
+RUN <<EOF
+#!/usr/bin/env bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# A delta: re-pinning a package the parent's "dnf update -y" has moved past
+# would be a downgrade, which dnf refuses.
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
@@ -164,5 +213,57 @@ STOPSIGNAL SIGINT
 # documentation at https://www.postgresql.org/docs/current/server-start.html notes
 # that even 90 seconds may not be long enough in many instances.
 
+EXPOSE 5432
+CMD ["postgres"]
+
+############################
+# coldfront-flavored image #
+############################
+#
+# FROM standard because ColdFront's vector-tiering path needs pgvector.
+
+FROM ${STANDARD_IMAGE} AS coldfront
+
+# Its own ARG: PACKAGE_LIST_FILE is consumed by an inherited stage, which would
+# then COPY this list in place of its own.
+ARG COLDFRONT_PACKAGE_LIST_FILE
+ARG TARGETARCH
+ARG POSTGRES_MAJOR_VERSION
+
+USER root
+
+COPY packagelists/${TARGETARCH}/${COLDFRONT_PACKAGE_LIST_FILE} /usr/share/pgedge/coldfront-packages.txt
+
+RUN <<CFEOF
+#!/usr/bin/env bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# Dependencies are dnf's to resolve. No second "dnf update -y": that would move
+# ColdFront past its pinned NVR.
+xargs dnf install -y --setopt=install_weak_deps=False < /usr/share/pgedge/coldfront-packages.txt
+dnf clean all
+
+CFEOF
+
+# Read by coldfront-entrypoint.sh. autoinstall stays off there: the RPM ships
+# all four extensions, and with allow_unsigned on it would fetch unsigned code.
+# Writable home for the config the entrypoint renders; the packaged one is
+# 0600 coldfront:coldfront and this image runs as postgres. Declared, not created
+# at runtime, so it is discoverable and mountable under --read-only.
+RUN install --verbose --directory --owner postgres --group postgres --mode 0700 \
+        /var/lib/pgedge/coldfront
+
+ENV COLDFRONT_PRELOAD="pg_duckdb,coldfront"
+ENV COLDFRONT_EXTENSION_DIR="/usr/lib/pgedge/coldfront/duckdb-extensions"
+
+COPY coldfront-entrypoint.sh /usr/local/bin/
+
+USER postgres
+
+ENTRYPOINT ["/usr/local/bin/coldfront-entrypoint.sh"]
+STOPSIGNAL SIGINT
 EXPOSE 5432
 CMD ["postgres"]
