@@ -50,10 +50,14 @@ jobs:
             tag=$(echo "$tag" | xargs)  # trim whitespace
             
             # Determine flavor from tag
-            if [[ "$tag" == *"-minimal"* ]]; then
+            if [[ "$tag" == *"-postgres"* ]]; then
+              flavor="postgres"
+            elif [[ "$tag" == *"-minimal"* ]]; then
               flavor="minimal"
             elif [[ "$tag" == *"-standard"* ]]; then
               flavor="standard"
+            elif [[ "$tag" == *"-coldfront"* ]]; then
+              flavor="coldfront"
             else
               # Default to standard if not specified
               flavor="standard"

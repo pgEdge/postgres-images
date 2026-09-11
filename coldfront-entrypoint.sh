@@ -96,6 +96,20 @@ archiver | partitioner | compactor)
     ;;
 esac
 
+# libpq keyword/value quoting for the loopback DSN: single-quote the value and
+# backslash-escape backslashes and quotes, so a space or quote in a role or
+# database name cannot split the DSN or end a value early.
+_cf_dsn_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/[\\\\']/\\\\&/g")"
+}
+
+# docker-entrypoint.sh turns a leading option into "postgres $@", but only after
+# this wrapper has run. Normalising first keeps `run <image> -c work_mem=...` on
+# the branch below instead of silently starting without the preloads.
+case ${1:-} in
+-*) set -- postgres "$@" ;;
+esac
+
 if [ "${1:-}" = "postgres" ]; then
     shift
 
@@ -128,9 +142,9 @@ if [ "${1:-}" = "postgres" ]; then
     # the socket lives elsewhere -- CNPG forces /controller/run.
     if [ -z "${COLDFRONT_LOCAL_PG_DSN:-}" ]; then
         _cf_user="${POSTGRES_USER:-postgres}"
-        COLDFRONT_LOCAL_PG_DSN="host=${COLDFRONT_SOCKET_DIR:-/var/run/postgresql}"
-        COLDFRONT_LOCAL_PG_DSN+=" dbname=${POSTGRES_DB:-${_cf_user}}"
-        COLDFRONT_LOCAL_PG_DSN+=" user=${_cf_user}"
+        COLDFRONT_LOCAL_PG_DSN="host=$(_cf_dsn_quote "${COLDFRONT_SOCKET_DIR:-/var/run/postgresql}")"
+        COLDFRONT_LOCAL_PG_DSN+=" dbname=$(_cf_dsn_quote "${POSTGRES_DB:-${_cf_user}}")"
+        COLDFRONT_LOCAL_PG_DSN+=" user=$(_cf_dsn_quote "${_cf_user}")"
         COLDFRONT_LOCAL_PG_DSN+=" application_name=coldfront_pglocal"
     fi
     args+=(-c coldfront.local_pg_dsn="${COLDFRONT_LOCAL_PG_DSN}")
