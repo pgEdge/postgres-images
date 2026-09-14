@@ -25,22 +25,7 @@ not a hardcoded role name: Postgres automatically maintains membership
 in this predefined role to match whoever currently owns the database,
 so the grant keeps working even if that database is later reassigned
 to a different owner, and needs no assumption about what the owner is
-named. See `pg_cron`'s `after-create.sql` for the pattern.
-
-A script here only runs in a session that has `supautils` loaded.
-Every privileged (allowlisted) extension's `before-create.sql` checks
-`session_user` against `supautils.privileged_role` directly, rather
-than relying on only the privileged role's session ever loading
-`supautils` in the first place: `supautils.privileged_extensions`
-itself has no concept of "who is asking", it only checks the
-extension name, so restricting installs to one role has always
-depended on `supautils` being loaded cluster-wide
-(`shared_preload_libraries`) and this check being the thing that
-actually enforces who gets to use it, not session scoping.
-
-`session_user` stays the role that actually authenticated for the
-whole session, even once supautils switches the acting role to
-install the extension, so the check holds regardless of that
-elevation. See `postgis/before-create.sql` for the plain case and
-`lolor/before-create.sql` for one that layers an extension-specific
-requirement on top of the same role check.
+named. See `pg_cron`'s `after-create.sql` for the pattern. A script
+that blocks an install outright regardless of role (see `lolor`'s
+`before-create.sql`) has no such grant to make in the first place,
+refusing a broken install is correct for every consumer of this image.

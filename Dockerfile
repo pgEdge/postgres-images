@@ -137,10 +137,7 @@ RUN install --verbose --directory --owner postgres --group postgres --mode 1777 
 # rather than a runtime mount: supautils reads these from a plain
 # filesystem path with no other configuration hook available. See
 # extension-custom-scripts/README.md for the convention new scripts
-# follow, including the before-create.sql role check every gated
-# extension carries now that supautils.privileged_role is enforced
-# via extension_custom_scripts_path rather than being an emergent
-# property of whose session happens to load supautils.
+# follow.
 COPY --chown=postgres:postgres extension-custom-scripts /etc/pgedge/extension-custom-scripts
 
 USER postgres
