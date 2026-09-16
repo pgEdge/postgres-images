@@ -409,7 +409,7 @@ func (r *TestRunner) Start() error {
 	// Note: We only include extensions that are guaranteed to be in all images
 	sharedLibs := "spock,snowflake"
 	if r.flavor == "standard" {
-		sharedLibs = "spock,snowflake,pgaudit,supautils"
+		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron"
 	}
 
 	// Build postgres command with required configuration
@@ -422,6 +422,11 @@ func (r *TestRunner) Start() error {
 		"-c", "max_replication_slots=10",
 		"-c", "max_wal_senders=10",
 		"-c", "snowflake.node=1",
+	}
+	if r.flavor == "standard" {
+		// pg_cron only ever installs into the one database this names,
+		// and refuses CREATE EXTENSION anywhere else.
+		cmd = append(cmd, "-c", "cron.database_name=testdb", "-c", "cron.use_background_workers=on")
 	}
 
 	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
@@ -992,7 +997,7 @@ func getExtensionCustomScriptsTests() []Test {
 		{
 			Name:           "configure supautils.privileged_extensions",
 			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us';\"",
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us, pg_cron';\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1068,6 +1073,54 @@ func getExtensionCustomScriptsTests() []Test {
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM relocated_gis.us_lex;\"",
 			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs pg_cron",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_cron;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_cron's after-create.sql grants USAGE + SELECT only, no
+			// ownership: schedule() writes to cron.job through pg_cron's
+			// own internal code, not a caller-privileged INSERT, so
+			// SELECT is enough for the database's owner to schedule its
+			// own jobs directly.
+			Name:           "pg_cron after-create.sql lets the owner schedule its own job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "pg_cron after-create.sql lets the owner list its own job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT jobname FROM cron.job WHERE jobname = 'probe';\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "probe" {
+					return fmt.Errorf("expected to see the scheduled job, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			Name:           "pg_cron after-create.sql lets the owner unschedule its own job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.unschedule('probe');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The thing SELECT-only deliberately does not allow: a raw
+			// write against cron.job, which is what let a previous
+			// version of this script's OWNER TO grant be used to set
+			// username on a row to any role, including postgres. No
+			// ownership, no write path, nothing to close after the fact.
+			Name:           "pg_cron after-create.sql refuses a raw write to cron.job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO cron.job (schedule, command, nodename, nodeport, database, username) VALUES ('* * * * *', 'SELECT 1', 'localhost', 5432, 'testdb', 'postgres');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for table job"),
 		},
 		{
 			// spock is not installed in this database, so lolor's

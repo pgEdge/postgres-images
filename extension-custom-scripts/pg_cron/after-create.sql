@@ -2,7 +2,8 @@
 -- same superuser session used to install the extension (see
 -- supautils.superuser). pg_cron's install script creates cron.job and
 -- cron.job_run_details owned by that superuser, leaving the current
--- database's own owner with no path to manage its own scheduled jobs.
+-- database's own owner with no path to manage its own scheduled jobs
+-- or review their run history.
 --
 -- Granted to pg_database_owner rather than a hardcoded role name:
 -- Postgres automatically maintains membership in this predefined role to
@@ -10,22 +11,22 @@
 -- this keeps working correctly if that database is later reassigned to a
 -- different owner, and needs no assumption about what that owner is
 -- named. See https://www.postgresql.org/docs/current/predefined-roles.html.
+--
+-- SELECT only, ownership stays with the installing superuser:
+-- cron.schedule() and cron.unschedule() are not SECURITY DEFINER, they
+-- run as the caller, but they write to cron.job through pg_cron's own
+-- internal C code, not through a normal caller-privileged INSERT or
+-- UPDATE. Confirmed directly: a role with only this SELECT grant can
+-- schedule, list, and unschedule its own jobs through those functions,
+-- and a raw INSERT or UPDATE against cron.job as that role is refused
+-- outright, permission denied, with no ownership or row-level-security
+-- involved at all. Handing over ownership, an earlier version of this
+-- script did, opened a real gap instead: the owner could set username
+-- on a new row to any role, including postgres, and pg_cron's launcher
+-- would then execute that row in-process, crashing the instance rather
+-- than raising a clean permission error. Fixed at the time by forcing
+-- row level security on both tables, which was fixing a problem this
+-- narrower grant never has: nothing here ever needed ownership to work.
 GRANT USAGE ON SCHEMA cron TO pg_database_owner;
-ALTER TABLE cron.job OWNER TO pg_database_owner;
-ALTER TABLE cron.job_run_details OWNER TO pg_database_owner;
-
--- Row level security does not apply to a table's own owner by default,
--- only to everyone else, and the two ALTER TABLE ... OWNER statements
--- above just made pg_database_owner (and so whichever role owns this
--- database) the owner of both tables. Without this, that owner could
--- insert or update a row with username set to any role, including
--- postgres, bypassing cron.job's own "username = CURRENT_USER" policy
--- entirely. With cron.use_background_workers on, pg_cron's launcher
--- then tries to execute that row in-process, which crashes the whole
--- instance rather than raising a clean permission error. Forcing row
--- level security here closes that: the owner is held to the same
--- policy as anyone else, while cron.schedule()/cron.unschedule() keep
--- working normally, since a role scheduling its own job already sets
--- username to itself.
-ALTER TABLE cron.job FORCE ROW LEVEL SECURITY;
-ALTER TABLE cron.job_run_details FORCE ROW LEVEL SECURITY;
+GRANT SELECT ON cron.job TO pg_database_owner;
+GRANT SELECT ON cron.job_run_details TO pg_database_owner;
