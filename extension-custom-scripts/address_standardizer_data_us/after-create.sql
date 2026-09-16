@@ -20,6 +20,15 @@
 -- this keeps working if the database is later reassigned to a
 -- different owner. See
 -- https://www.postgresql.org/docs/current/predefined-roles.html.
+--
+-- Also grants USAGE on the schema itself, not just SELECT on the
+-- tables: table-level SELECT alone is not enough to query a table
+-- outside the search path, Postgres separately checks USAGE on the
+-- schema before it will even look a table up in it. The default,
+-- unrelocated case (public) happens to work without this, since
+-- public grants USAGE to PUBLIC by default, but a schema named on an
+-- explicit SCHEMA clause has no such default and would otherwise
+-- leave pg_database_owner with a grant it can never actually use.
 DO $$
 DECLARE ext_schema name;
 BEGIN
@@ -28,6 +37,10 @@ BEGIN
   JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
   WHERE e.extname = 'address_standardizer_data_us';
 
+  EXECUTE format(
+    'GRANT USAGE ON SCHEMA %I TO pg_database_owner',
+    ext_schema
+  );
   EXECUTE format(
     'GRANT SELECT ON TABLE %I.us_lex, %I.us_gaz, %I.us_rules TO pg_database_owner',
     ext_schema, ext_schema, ext_schema

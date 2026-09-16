@@ -964,9 +964,17 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
+			// Made testdb's actual owner, not just given CREATE on it: the
+			// scripts under test grant to pg_database_owner, a predefined
+			// role whose membership tracks whoever currently owns the
+			// database, and testdb starts out owned by postgres, a
+			// superuser that bypasses every ACL check regardless of what
+			// gets granted. Without this, checking pg_database_owner's
+			// access would really be checking postgres's, which proves
+			// nothing.
 			Name:           "create the non-superuser role the gate tests connect as",
 			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE gate_test_role LOGIN NOSUPERUSER; GRANT CREATE ON DATABASE testdb TO gate_test_role; ALTER ROLE gate_test_role SET session_preload_libraries = 'supautils';\"",
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE gate_test_role LOGIN NOSUPERUSER; ALTER DATABASE testdb OWNER TO gate_test_role; ALTER ROLE gate_test_role SET session_preload_libraries = 'supautils';\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1020,22 +1028,17 @@ func getExtensionCustomScriptsTests() []Test {
 			// Confirms after-create.sql actually ran and granted access,
 			// not just that the extension installed: gate_test_role has no
 			// grant of its own on these tables, only what the script gave
-			// pg_database_owner, and gate_test_role owns testdb's default
-			// connection database here since it created the objects with
-			// CREATE privilege on the database, not ownership of it, so
-			// this checks the grant through pg_database_owner specifically.
-			Name:         "address_standardizer_data_us after-create.sql granted access",
-			StandardOnly: true,
-			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT has_table_privilege('pg_database_owner', 'us_lex', 'SELECT');\"",
-			ExpectedOutput: func(exitCode int, output string) error {
-				if exitCode != 0 {
-					return fmt.Errorf("unexpected exit code: %d", exitCode)
-				}
-				if strings.TrimSpace(output) != "t" {
-					return fmt.Errorf("pg_database_owner should have SELECT on us_lex after the after-create.sql script runs, got: %s", output)
-				}
-				return nil
-			},
+			// pg_database_owner, which gate_test_role belongs to by owning
+			// testdb (see the role-creation step above). Runs the real
+			// query, not a has_table_privilege check: that check only
+			// covers the table-level grant, missing a separate, real bug
+			// this exact test caught once already, a table grant with no
+			// matching schema USAGE, which fails at query time despite
+			// has_table_privilege reporting true.
+			Name:           "address_standardizer_data_us after-create.sql granted access",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM us_lex;\"",
+			ExpectedOutput: expectSuccess,
 		},
 		{
 			// Reproduces the case the schema lookup in after-create.sql
@@ -1054,18 +1057,17 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name:         "address_standardizer_data_us after-create.sql found the relocated schema",
-			StandardOnly: true,
-			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT has_table_privilege('pg_database_owner', 'relocated_gis.us_lex', 'SELECT');\"",
-			ExpectedOutput: func(exitCode int, output string) error {
-				if exitCode != 0 {
-					return fmt.Errorf("unexpected exit code: %d", exitCode)
-				}
-				if strings.TrimSpace(output) != "t" {
-					return fmt.Errorf("pg_database_owner should have SELECT on relocated_gis.us_lex, got: %s", output)
-				}
-				return nil
-			},
+			// Real query again, for the same reason as the default-schema
+			// case above, and specifically the one where a missing schema
+			// USAGE grant would actually surface: public grants USAGE to
+			// PUBLIC by default, so the default-schema case would have
+			// passed even without it, this relocated schema has no such
+			// default and only passes if the script's own USAGE grant
+			// worked.
+			Name:           "address_standardizer_data_us after-create.sql found the relocated schema",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM relocated_gis.us_lex;\"",
+			ExpectedOutput: expectSuccess,
 		},
 		{
 			// spock is not installed in this database, so lolor's
