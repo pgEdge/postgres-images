@@ -789,7 +789,8 @@ func getCommonExtensionTests() []Test {
 
 func getStandardOnlyTests() []Test {
 	tests := append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
-	return append(tests, getSupautilsTests()...)
+	tests = append(tests, getSupautilsTests()...)
+	return append(tests, getExtensionCustomScriptsTests()...)
 }
 
 func getSupautilsTests() []Test {
@@ -920,4 +921,159 @@ func expectSuccess(exitCode int, output string) error {
 		return fmt.Errorf("unexpected exit code: %d", exitCode)
 	}
 	return nil
+}
+
+// expectFailureContaining returns an ExpectedOutput func for a command that
+// must fail (a non-zero exit from psql -c means the statement errored), with
+// the error text containing want. Used for every negative case below: a
+// plain non-zero exit code alone would also pass for the wrong reason (a
+// typo'd role name, a connection failure), so the actual error text is
+// checked too.
+func expectFailureContaining(want string) func(exitCode int, output string) error {
+	return func(exitCode int, output string) error {
+		if exitCode == 0 {
+			return fmt.Errorf("expected failure, got success: %s", output)
+		}
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("expected output containing %q, got: %s", want, output)
+		}
+		return nil
+	}
+}
+
+// getExtensionCustomScriptsTests exercises supautils' gate and the
+// extension-custom-scripts this repo ships, not just that the library
+// loads: a non-superuser role installing an allowlisted extension through
+// the gate, the same role refused a non-allowlisted one, lolor's
+// before-create.sql refusing the install without spock, and
+// address_standardizer_data_us's after-create.sql granting access in
+// whichever schema the extension actually landed in, not a hardcoded one.
+//
+// Runs after getCommonExtensionTests, which already installs both spock
+// and lolor as postgres with no supautils configuration in effect
+// (privileged_role is unset at that point, so the gate never engages for
+// either): this drops both first, spock included, so the before-create.sql
+// case below is a genuine spock-absent attempt, not a no-op against a
+// database that already has both from the earlier, unrelated test.
+func getExtensionCustomScriptsTests() []Test {
+	return []Test{
+		{
+			Name:           "reset: drop lolor and spock installed earlier with no gate configured",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"DROP EXTENSION IF EXISTS lolor; DROP EXTENSION IF EXISTS spock CASCADE;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "create the non-superuser role the gate tests connect as",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE gate_test_role LOGIN NOSUPERUSER; GRANT CREATE ON DATABASE testdb TO gate_test_role; ALTER ROLE gate_test_role SET session_preload_libraries = 'supautils';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.privileged_role",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_role = 'gate_test_role';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.superuser",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.superuser = 'postgres';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.privileged_extensions",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.extension_custom_scripts_path",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.extension_custom_scripts_path = '/etc/pgedge/extension-custom-scripts';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "reload for the new supautils settings to take effect",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"SELECT pg_reload_conf();\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// dblink is untrusted and not on the allowlist configured above:
+			// the gate must refuse it for a non-superuser role the same way
+			// Postgres core would refuse any untrusted extension.
+			Name:           "gate refuses a non-allowlisted extension",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION dblink;\"",
+			ExpectedOutput: expectFailureContaining("Must be superuser"),
+		},
+		{
+			// address_standardizer is a dependency address_standardizer_data_us
+			// needs installed first; both are on the allowlist configured above.
+			Name:           "gate allows an allowlisted extension",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION address_standardizer; CREATE EXTENSION address_standardizer_data_us;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Confirms after-create.sql actually ran and granted access,
+			// not just that the extension installed: gate_test_role has no
+			// grant of its own on these tables, only what the script gave
+			// pg_database_owner, and gate_test_role owns testdb's default
+			// connection database here since it created the objects with
+			// CREATE privilege on the database, not ownership of it, so
+			// this checks the grant through pg_database_owner specifically.
+			Name:         "address_standardizer_data_us after-create.sql granted access",
+			StandardOnly: true,
+			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT has_table_privilege('pg_database_owner', 'us_lex', 'SELECT');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "t" {
+					return fmt.Errorf("pg_database_owner should have SELECT on us_lex after the after-create.sql script runs, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// Reproduces the case the schema lookup in after-create.sql
+			// exists for: an explicit SCHEMA clause lands the tables
+			// somewhere other than public, and the grant must still land
+			// on the actual schema, not a hardcoded one.
+			Name:           "address_standardizer_data_us after-create.sql follows an explicit SCHEMA clause",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE SCHEMA relocated_gis; DROP EXTENSION address_standardizer_data_us; DROP EXTENSION address_standardizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "reinstall address_standardizer_data_us into the relocated schema",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION address_standardizer SCHEMA relocated_gis; CREATE EXTENSION address_standardizer_data_us SCHEMA relocated_gis;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:         "address_standardizer_data_us after-create.sql found the relocated schema",
+			StandardOnly: true,
+			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT has_table_privilege('pg_database_owner', 'relocated_gis.us_lex', 'SELECT');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "t" {
+					return fmt.Errorf("pg_database_owner should have SELECT on relocated_gis.us_lex, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// spock is not installed in this database, so lolor's
+			// before-create.sql must refuse the install outright.
+			Name:           "lolor before-create.sql refuses install without spock",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION lolor;\"",
+			ExpectedOutput: expectFailureContaining("lolor requires spock"),
+		},
+	}
 }
