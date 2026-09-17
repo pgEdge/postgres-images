@@ -674,7 +674,7 @@ func buildTestSuite(spockMajor string) []Test {
 
 // getSpockVersionTests asserts that the spock extension installed in the image
 // matches the major version advertised by the image tag. This distinguishes,
-// for example, a spock6 image from a spock5 image — a mismatch would otherwise
+// for example, a spock6 image from a spock5 image, a mismatch would otherwise
 // pass every other test unnoticed. Returns no tests when the expected major
 // version could not be derived from the image tag.
 func getSpockVersionTests(spockMajor string) []Test {
@@ -1199,6 +1199,130 @@ func getExtensionCustomScriptsTests() []Test {
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.CreateTopology('probe_topo', 4326);\"",
 			ExpectedOutput: expectSuccess,
+		},
+		{
+			// AddTopoGeometryColumn only needs INSERT, which a plain
+			// grant already covers, so this alone would pass even
+			// without ownership. Included for lifecycle completeness,
+			// the real proof is the rename step below.
+			Name:           "postgis_topology after-create.sql lets the owner register a layer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE probe_feat(id serial primary key); SELECT topology.AddTopoGeometryColumn('probe_topo', 'public', 'probe_feat', 'g', 'POLYGON');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// This is the one call in the whole lifecycle that a plain
+			// grant cannot satisfy: RenameTopoGeometryColumn() runs
+			// ALTER TABLE topology.layer DISABLE/ENABLE TRIGGER, which
+			// needs real ownership. Confirmed directly: a role with
+			// full DML and even the TRIGGER privilege on both tables
+			// still gets "must be owner of table layer" here, so this
+			// is the test that actually proves the ownership handoff
+			// is doing something, not just that CreateTopology's INSERT
+			// happens to work.
+			Name:           "postgis_topology after-create.sql lets the owner rename a layer column",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.RenameTopoGeometryColumn('probe_feat', 'g', 'g2');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "postgis_topology after-create.sql lets the owner drop a topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.DropTopology('probe_topo');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// A role the database's owner creates itself, not the
+			// owner and not a member of pg_database_owner: none of the
+			// grants above reach it through membership at all, so this
+			// is what actually proves the PUBLIC grant, not just that
+			// pg_database_owner has access.
+			Name:           "create a third-party role the owner does not control access through",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE reporting_role LOGIN NOSUPERUSER;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_database_owner's own grant carries no GRANT OPTION,
+			// so the owner has no way to pass this on by hand either;
+			// confirms that silent no-op rather than assuming it.
+			Name:         "owner re-granting schema access by hand is a silent no-op",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"GRANT USAGE ON SCHEMA tiger TO reporting_role;\" 2>&1",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if !strings.Contains(output, "no privileges were granted") {
+					return fmt.Errorf("expected a no-op warning, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// Reads relocated_gis.us_lex, not the bare table name: an
+			// earlier test in this suite already relocated
+			// address_standardizer_data_us there via an explicit
+			// SCHEMA clause.
+			Name:           "third-party role reaches address_standardizer_data_us via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT count(*) FROM relocated_gis.us_lex;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "third-party role reaches postgis_tiger_geocoder via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT normalize_address('1 Devonshire Pl, Boston, MA 02109');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "third-party role reaches vchord_bm25/pg_tokenizer via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT pg_typeof('{1:1}'::bm25_catalog.bm25vector); SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The write side stays pg_database_owner-only regardless
+			// of the PUBLIC read grant above.
+			Name:           "third-party role still refused a tokenizer_catalog write",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.tokenizer(name) VALUES ('probe');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for table tokenizer"),
+		},
+		{
+			// Schema USAGE makes every function in tokenizer_catalog
+			// resolvable, and Postgres grants EXECUTE on new functions
+			// to PUBLIC by default, so without this REVOKE a
+			// third-party role could reach config-parsing/model-loading
+			// functions that were never meant to be public, none of
+			// them SECURITY DEFINER, but still real work running before
+			// any table-ACL check fires. Confirmed cleanly refused at
+			// the function call itself now, not at some later step.
+			Name:           "third-party role refused the tokenizer_catalog config-management functions",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe', 'x');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
+		},
+		{
+			// The three functions the read-only use case actually
+			// needs stay PUBLIC-executable: tokenize() and
+			// apply_text_analyzer() to process text against an
+			// existing configuration, list_preload_models() to see
+			// what's available.
+			Name:           "third-party role keeps the read-only tokenizer_catalog functions",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.list_preload_models();\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_cron is deliberately not part of this fix: cron.job is
+			// already scoped per username by its own row-level security
+			// policy, a PUBLIC grant here would not change what a
+			// third-party role can see or do with it.
+			Name:           "third-party role still has no path into pg_cron",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for schema cron"),
 		},
 	}
 }

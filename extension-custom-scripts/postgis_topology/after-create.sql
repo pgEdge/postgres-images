@@ -4,14 +4,19 @@
 -- actual purpose needs a lot more than INSERT on topology.topology and
 -- topology.layer: DropTopology()/DropTopoGeometryColumn() DELETE from
 -- both, RenameTopology()/RenameTopoGeometryColumn() UPDATE them, and
--- the rename path also runs ALTER TABLE ... DISABLE/ENABLE TRIGGER on
--- topology.layer, which Postgres never grants, only an owner (or
--- superuser) can do it. Reassigning ownership of exactly these two
--- tables covers all of that in one step, the same approach used for
--- pg_cron's job tables. Scoped to exactly these two tables rather than
--- the whole schema, since broadening a similar database-wide default
--- was tried elsewhere and rejected: it would also hand write access to
--- other gated extensions' catalogs that are meant to stay admin-only.
+-- RenameTopoGeometryColumn() additionally runs ALTER TABLE ...
+-- DISABLE/ENABLE TRIGGER on topology.layer, which Postgres never
+-- grants, only an owner (or superuser) can do it. Unlike pg_cron,
+-- whose write functions bypass ACL checks through internal C code,
+-- postgis_topology's functions run as the caller through ordinary
+-- ACL-checked DML, so a grant-only approach can't cover the trigger
+-- toggle: confirmed directly, a role with full DML and even the
+-- TRIGGER privilege on both tables still gets "must be owner of table
+-- layer" from RenameTopoGeometryColumn(). Reassigning ownership of
+-- exactly these two tables is the only way to cover all of that.
+-- Scoped to exactly these two tables rather than the whole schema, so
+-- it doesn't also hand write access to other gated extensions'
+-- catalogs that are meant to stay admin-only.
 --
 -- Reassigned to pg_database_owner rather than a hardcoded role name,
 -- so this keeps working if the database is later reassigned to a

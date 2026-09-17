@@ -29,6 +29,10 @@
 -- public grants USAGE to PUBLIC by default, but a schema named on an
 -- explicit SCHEMA clause has no such default and would otherwise
 -- leave pg_database_owner with a grant it can never actually use.
+--
+-- Also granted to PUBLIC: pg_database_owner's own grant carries no
+-- GRANT OPTION, so there is no way to pass it on to another role
+-- afterward, and the attempt is a silent no-op, not an error.
 DO $$
 DECLARE ext_schema name;
 BEGIN
@@ -38,11 +42,11 @@ BEGIN
   WHERE e.extname = 'address_standardizer_data_us';
 
   EXECUTE format(
-    'GRANT USAGE ON SCHEMA %I TO pg_database_owner',
+    'GRANT USAGE ON SCHEMA %I TO pg_database_owner, PUBLIC',
     ext_schema
   );
   EXECUTE format(
-    'GRANT SELECT ON TABLE %I.us_lex, %I.us_gaz, %I.us_rules TO pg_database_owner',
+    'GRANT SELECT ON TABLE %I.us_lex, %I.us_gaz, %I.us_rules TO pg_database_owner, PUBLIC',
     ext_schema, ext_schema, ext_schema
   );
 END
