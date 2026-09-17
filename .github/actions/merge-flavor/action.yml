@@ -1,0 +1,115 @@
+name: Merge one image flavor
+description: >
+  Assembles one flavor's per-architecture digests into a manifest list, signs the
+  index, and only then applies the mutable tags. Ordering matters: the per-arch
+  manifests pushed by the build jobs are untagged, and the immutable epoch tag is
+  created here from an index that is signed before any other tag points at it, so
+  no consumer-facing tag is ever live without a signature.
+
+inputs:
+  cell:
+    description: One merge entry emitted by scripts/build_pgedge_images.py (PGEDGE_EMIT_MATRIX=1)
+    required: true
+  repo:
+    description: Image repository to publish to
+    required: true
+  registry_token:
+    description: >
+      Token for the container registry. A composite action has no secrets
+      context, so this has to be passed in by the calling workflow.
+    required: true
+  dry_run:
+    description: When true, print what would be published and exit
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      if: ${{ inputs.dry_run != 'true' }}
+      uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+    # buildx-init only registers the builder; buildx selects it via the
+    # BUILDX_BUILDER environment variable. Without this the build lands on the
+    # default docker driver, which rejects the bake file's attestations.
+    - name: Setup Docker Buildx
+      shell: bash
+      run: |
+        set -o errexit -o pipefail
+        make buildx-init
+        echo "BUILDX_BUILDER=$(make -s print-buildx-builder)" >> "$GITHUB_ENV"
+
+    - name: Login to the container registry
+      if: ${{ inputs.dry_run != 'true' }}
+      uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Collect the per-architecture digests
+      if: ${{ inputs.dry_run != 'true' && fromJSON(inputs.cell).needs_build }}
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        pattern: digest-*-${{ fromJSON(inputs.cell).build_tag }}-*
+        path: digests
+        merge-multiple: true
+
+    - name: Create, sign, then tag
+      if: ${{ inputs.dry_run != 'true' }}
+      shell: bash
+      env:
+        CELL: ${{ inputs.cell }}
+        REPO: ${{ inputs.repo }}
+      run: |
+        set -o errexit -o pipefail -o nounset
+
+        build_tag=$(jq -r '.build_tag' <<< "$CELL")
+
+        # needs_build is false when the immutable tag was already published and
+        # republish was not requested. The index is then left exactly as it is --
+        # not reassembled, not re-signed -- and only the mutable tags are
+        # refreshed, so a re-dispatch repairs tag drift without rebuilding.
+        if [[ "$(jq -r '.needs_build' <<< "$CELL")" == "true" ]]; then
+          # One source per architecture, addressed by digest.
+          sources=()
+          while read -r arch; do
+            digest=$(cat "digests/${arch}")
+            test -n "$digest"
+            sources+=("${REPO}@${digest}")
+          done < <(jq -r '.arches[]' <<< "$CELL")
+          test "${#sources[@]}" -gt 0
+
+          echo "Assembling ${REPO}:${build_tag} from ${#sources[@]} platform manifest(s)"
+          docker buildx imagetools create --tag "${REPO}:${build_tag}" "${sources[@]}"
+
+          # cosign signs the index. Its children are content-addressed by the
+          # index, so verifying a tag transitively covers every platform.
+          index_digest=$(docker buildx imagetools inspect "${REPO}:${build_tag}" \
+            --format '{{ printf "%s" .Manifest.Digest }}')
+          cosign sign --yes "${REPO}@${index_digest}"
+        else
+          echo "${REPO}:${build_tag} is already published; refreshing tags only"
+        fi
+
+        # Mutable tags last, so each points at an already-signed index.
+        while read -r tag; do
+          echo "Tagging ${REPO}:${tag}"
+          docker buildx imagetools create --tag "${REPO}:${tag}" "${REPO}:${build_tag}"
+        done < <(jq -r '.extra_tags[]' <<< "$CELL")
+
+    - name: Dry run summary
+      if: ${{ inputs.dry_run == 'true' }}
+      shell: bash
+      env:
+        CELL: ${{ inputs.cell }}
+        REPO: ${{ inputs.repo }}
+      run: |
+        if [[ "$(jq -r '.needs_build' <<< "$CELL")" == "true" ]]; then
+          echo "would assemble and sign ${REPO}:$(jq -r '.build_tag' <<< "$CELL")"
+          echo "  from arches : $(jq -r '.arches | join(", ")' <<< "$CELL")"
+        else
+          echo "${REPO}:$(jq -r '.build_tag' <<< "$CELL") already published; tags only"
+        fi
+        echo "  mutable tags: $(jq -r '.extra_tags | join(", ")' <<< "$CELL")"

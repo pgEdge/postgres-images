@@ -27,7 +27,21 @@ type Test struct {
 	Name           string
 	Cmd            string
 	ExpectedOutput func(exitCode int, output string) error
-	StandardOnly   bool // Only run on standard flavor images
+	MinimalOnly    bool // Only run on minimal-or-later (needs the pgEdge extensions)
+	StandardOnly   bool // Only run on standard-or-later flavors (standard, coldfront)
+	ColdfrontOnly  bool // Only run on the coldfront flavor
+}
+
+// includesMinimal reports whether a flavor ships the pgEdge extensions minimal
+// adds. postgres, the bare server, does not.
+func includesMinimal(flavor string) bool {
+	return flavor == "minimal" || includesStandard(flavor)
+}
+
+// includesStandard reports whether a flavor ships everything standard does.
+// coldfront is chained FROM standard, so it is a superset.
+func includesStandard(flavor string) bool {
+	return flavor == "standard" || flavor == "coldfront"
 }
 
 // TestRunner manages container lifecycle and test execution
@@ -101,20 +115,20 @@ func spockMajorFromImage(image string) string {
 
 func parseFlags() (string, string) {
 	image := flag.String("image", "", "Docker image to test (required)")
-	flavor := flag.String("flavor", "", "Image flavor: minimal or standard (required)")
+	flavor := flag.String("flavor", "", "Image flavor: postgres, minimal, standard or coldfront (required)")
 	flag.Parse()
 
 	if *image == "" || *flavor == "" {
-		fmt.Println("Usage: go run main.go -image <image> -flavor <minimal|standard>")
+		fmt.Println("Usage: go run main.go -image <image> -flavor <postgres|minimal|standard|coldfront>")
 		fmt.Println()
 		fmt.Println("Arguments:")
 		fmt.Println("  -image   Docker image to test (e.g., ghcr.io/pgedge/pgedge-postgres:17-spock5-standard)")
-		fmt.Println("  -flavor  Image flavor: 'minimal' or 'standard'")
+		fmt.Println("  -flavor  Image flavor: 'postgres', 'minimal', 'standard' or 'coldfront'")
 		os.Exit(1)
 	}
 
-	if *flavor != "minimal" && *flavor != "standard" {
-		log.Fatalf("Invalid flavor '%s'. Must be 'minimal' or 'standard'", *flavor)
+	if *flavor != "postgres" && !includesMinimal(*flavor) {
+		log.Fatalf("Invalid flavor '%s'. Must be 'postgres', 'minimal', 'standard' or 'coldfront'", *flavor)
 	}
 
 	return *image, *flavor
@@ -151,8 +165,8 @@ func runEntrypointTests(runner *DefaultEntrypointRunner, flavor string) int {
 	}
 	fmt.Println()
 
-	// Phase 2: Test Patroni entrypoint (standard only)
-	if flavor == "standard" {
+	// Phase 2: Test Patroni entrypoint (standard and the flavors chained from it)
+	if includesStandard(flavor) {
 		printPhaseHeader("Phase 2: Patroni Entrypoint Test")
 		if err := runner.TestPatroniEntrypoint(); err != nil {
 			errorCount++
@@ -160,6 +174,19 @@ func runEntrypointTests(runner *DefaultEntrypointRunner, flavor string) int {
 			log.Printf("    Error: %v", err)
 		} else {
 			fmt.Printf("  Patroni entrypoint test                                ✅\n")
+		}
+		fmt.Println()
+	}
+
+	// Phase 2b: ColdFront's wrapper around that entrypoint
+	if flavor == "coldfront" {
+		printPhaseHeader("Phase 2b: ColdFront Entrypoint Test")
+		if err := runner.TestColdfrontEntrypoint(); err != nil {
+			errorCount++
+			fmt.Printf("  ColdFront entrypoint test                              ❌\n")
+			log.Printf("    Error: %v", err)
+		} else {
+			fmt.Printf("  ColdFront entrypoint test                              ✅\n")
 		}
 		fmt.Println()
 	}
@@ -199,13 +226,20 @@ func printSummary(errorCount int, flavor, spockMajor string) {
 	tests := buildTestSuite(spockMajor)
 	extensionTests := 0
 	for _, t := range tests {
-		if !t.StandardOnly || flavor == "standard" {
-			extensionTests++
+		if t.MinimalOnly && !includesMinimal(flavor) {
+			continue
 		}
+		if t.StandardOnly && !includesStandard(flavor) {
+			continue
+		}
+		if t.ColdfrontOnly && flavor != "coldfront" {
+			continue
+		}
+		extensionTests++
 	}
 
 	testsRun := 1 + extensionTests // default entrypoint + extensions
-	if flavor == "standard" {
+	if includesStandard(flavor) {
 		testsRun++ // patroni entrypoint
 	}
 
@@ -341,6 +375,92 @@ patroni /tmp/patroni.yml`, patroniConfig)
 	return resp.ID, nil
 }
 
+// TestColdfrontEntrypoint starts the image the way an operator passing server
+// options does -- a leading "-c" rather than an explicit "postgres" -- and with
+// a space in the role and database names, so both ways the wrapper can lose
+// ColdFront's settings are covered.
+func (r *DefaultEntrypointRunner) TestColdfrontEntrypoint() error {
+	const (
+		user = "cf user"
+		db   = "cf db"
+	)
+
+	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
+		Image: r.image,
+		Env: []string{
+			"POSTGRES_PASSWORD=testpassword",
+			"POSTGRES_USER=" + user,
+			"POSTGRES_DB=" + db,
+			"COLDFRONT_WAREHOUSE=wh",
+		},
+		// docker-entrypoint.sh only turns this into "postgres -c ..." after the
+		// ColdFront wrapper has run, so the wrapper has to normalise it itself.
+		Cmd: []string{"-c", "work_mem=8MB"},
+	}, &container.HostConfig{}, nil, nil, "")
+	if err != nil {
+		return fmt.Errorf("error creating container: %w", err)
+	}
+	defer r.cleanupContainer(resp.ID)
+
+	if err := r.cli.ContainerStart(r.ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("error starting container: %w", err)
+	}
+
+	psql := func(sql string) (string, error) {
+		exitCode, out, err := execInContainer(r.cli, r.ctx, resp.ID,
+			[]string{"psql", "-U", user, "-d", db, "-X", "-t", "-A", "-c", sql})
+		if err != nil {
+			return "", err
+		}
+		if exitCode != 0 {
+			return "", fmt.Errorf("psql exited %d: %s", exitCode, strings.TrimSpace(out))
+		}
+		return strings.TrimSpace(out), nil
+	}
+
+	// A real query, not pg_isready: initdb's own bootstrap server answers before
+	// the postmaster this test is about is listening.
+	ready := false
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+		if _, err := psql("SELECT 1"); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !ready {
+		return fmt.Errorf("timeout waiting for PostgreSQL to be ready")
+	}
+
+	checks := []struct {
+		name, sql, want string
+	}{
+		// Present only if the leading option did not bypass the wrapper.
+		{"shared_preload_libraries", "SHOW shared_preload_libraries", "pg_duckdb,coldfront"},
+		// The operator's own argument is appended last and still wins.
+		{"work_mem", "SHOW work_mem", "8MB"},
+		{"coldfront.warehouse", "SHOW coldfront.warehouse", "wh"},
+		// Spaces have to be quoted, not split into further libpq keywords.
+		{"coldfront.local_pg_dsn", "SHOW coldfront.local_pg_dsn",
+			"host='/var/run/postgresql' dbname='" + db + "' user='" + user + "' application_name=coldfront_pglocal"},
+	}
+	for _, c := range checks {
+		got, err := psql(c.sql)
+		if err != nil {
+			return fmt.Errorf("%s: %w", c.name, err)
+		}
+		if got != c.want {
+			return fmt.Errorf("%s = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// Connects back over that DSN, which a value split on its spaces could not do.
+	if _, err := psql("CREATE EXTENSION IF NOT EXISTS coldfront CASCADE; SELECT coldfront.ensure_pg_attached()"); err != nil {
+		return fmt.Errorf("ensure_pg_attached: %w", err)
+	}
+	return nil
+}
+
 func (r *DefaultEntrypointRunner) cleanupContainer(containerID string) {
 	r.cli.ContainerStop(r.ctx, containerID, container.StopOptions{})
 	r.cli.ContainerRemove(r.ctx, containerID, container.RemoveOptions{})
@@ -407,9 +527,18 @@ func (r *TestRunner) Start() error {
 	// Build shared_preload_libraries based on flavor
 	// These extensions require preloading before they can be used
 	// Note: We only include extensions that are guaranteed to be in all images
-	sharedLibs := "spock,snowflake"
-	if r.flavor == "standard" {
+	sharedLibs := ""
+	if includesMinimal(r.flavor) {
+		sharedLibs = "spock,snowflake"
+	}
+	if includesStandard(r.flavor) {
 		sharedLibs = "spock,snowflake,pgaudit,supautils"
+	}
+	// pg_duckdb and coldfront install hooks at postmaster start. The image's own
+	// entrypoint already passes them, but the -c built below is appended after it
+	// and would otherwise replace the value.
+	if r.flavor == "coldfront" {
+		sharedLibs += ",pg_duckdb,coldfront"
 	}
 
 	// Build postgres command with required configuration
@@ -421,7 +550,11 @@ func (r *TestRunner) Start() error {
 		"-c", "track_commit_timestamp=on",
 		"-c", "max_replication_slots=10",
 		"-c", "max_wal_senders=10",
-		"-c", "snowflake.node=1",
+	}
+	// snowflake.node exists only once that extension is preloaded; passing it to
+	// the bare server makes the postmaster refuse to start.
+	if includesMinimal(r.flavor) {
+		cmd = append(cmd, "-c", "snowflake.node=1")
 	}
 
 	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
@@ -595,7 +728,13 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 		return -1, "", fmt.Errorf("empty command")
 	}
 
-	execID, err := r.cli.ContainerExecCreate(r.ctx, r.containerID, container.ExecOptions{
+	return execInContainer(r.cli, r.ctx, r.containerID, cmdArgs)
+}
+
+// execInContainer runs an already-parsed argv in a container and returns its
+// exit code with stdout and stderr interleaved.
+func execInContainer(cli *client.Client, ctx context.Context, containerID string, cmdArgs []string) (int, string, error) {
+	execID, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmdArgs,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -604,19 +743,18 @@ func (r *TestRunner) exec(cmd string) (int, string, error) {
 		return -1, "", fmt.Errorf("error creating exec: %w", err)
 	}
 
-	resp, err := r.cli.ContainerExecAttach(r.ctx, execID.ID, container.ExecAttachOptions{})
+	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return -1, "", fmt.Errorf("error attaching to exec: %w", err)
 	}
 	defer resp.Close()
 
 	var outputBuf bytes.Buffer
-	_, err = stdcopy.StdCopy(&outputBuf, &outputBuf, resp.Reader)
-	if err != nil {
+	if _, err := stdcopy.StdCopy(&outputBuf, &outputBuf, resp.Reader); err != nil {
 		return -1, "", fmt.Errorf("error copying output: %w", err)
 	}
 
-	inspectResp, err := r.cli.ContainerExecInspect(r.ctx, execID.ID)
+	inspectResp, err := cli.ContainerExecInspect(ctx, execID.ID)
 	if err != nil {
 		return -1, "", fmt.Errorf("error inspecting exec: %w", err)
 	}
@@ -629,7 +767,13 @@ func (r *TestRunner) RunTests(tests []Test) int {
 
 	for _, test := range tests {
 		// Skip standard-only tests for minimal flavor
-		if test.StandardOnly && r.flavor != "standard" {
+		if test.MinimalOnly && !includesMinimal(r.flavor) {
+			continue
+		}
+		if test.StandardOnly && !includesStandard(r.flavor) {
+			continue
+		}
+		if test.ColdfrontOnly && r.flavor != "coldfront" {
 			continue
 		}
 
@@ -664,6 +808,7 @@ func buildTestSuite(spockMajor string) []Test {
 	// Runs after getCommonExtensionTests, which creates the spock extension.
 	tests = append(tests, getSpockVersionTests(spockMajor)...)
 	tests = append(tests, getStandardOnlyTests()...)
+	tests = append(tests, getColdfrontTests()...)
 	return tests
 }
 
@@ -678,8 +823,9 @@ func getSpockVersionTests(spockMajor string) []Test {
 	}
 	return []Test{
 		{
-			Name: fmt.Sprintf("Spock extension major version is %s", spockMajor),
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT extversion FROM pg_extension WHERE extname = 'spock';\"",
+			Name:        fmt.Sprintf("Spock extension major version is %s", spockMajor),
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT extversion FROM pg_extension WHERE extname = 'spock';\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -732,12 +878,14 @@ func getCommonExtensionTests() []Test {
 	return []Test{
 		{
 			Name:           "Spock extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS spock; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "Spock subscription table accessible",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT count(*) FROM spock.subscription;\"",
+			Name:        "Spock subscription table accessible",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT count(*) FROM spock.subscription;\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -750,12 +898,14 @@ func getCommonExtensionTests() []Test {
 		},
 		{
 			Name:           "LOLOR extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS lolor; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "LOLOR lo_create works",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT lo_create(200000);\"",
+			Name:        "LOLOR lo_create works",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT lo_create(200000);\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -768,18 +918,95 @@ func getCommonExtensionTests() []Test {
 		},
 		{
 			Name:           "Snowflake extension can be created",
+			MinimalOnly:    true,
 			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE EXTENSION IF NOT EXISTS snowflake; SELECT 1;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name: "Snowflake ID generation works",
-			Cmd:  "psql -U postgres -d testdb -t -A -c \"SELECT snowflake.nextval() > 0;\"",
+			Name:        "Snowflake ID generation works",
+			MinimalOnly: true,
+			Cmd:         "psql -U postgres -d testdb -t -A -c \"SELECT snowflake.nextval() > 0;\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
 				}
 				if strings.TrimSpace(output) != "t" {
 					return fmt.Errorf("unexpected output: %s (expected 't')", output)
+				}
+				return nil
+			},
+		},
+	}
+}
+
+// rpmExtensionDir is where pgedge-coldfront-duckdb-extensions installs the
+// DuckDB extension binaries. duckdb.extension_directory points here and
+// duckdb.autoinstall_known_extensions is off, so a successful load proves the
+// extensions are read from the read-only package path rather than fetched.
+const rpmExtensionDir = "/usr/lib/pgedge/coldfront/duckdb-extensions"
+
+func expectTrimmed(want string) func(int, string) error {
+	return func(exitCode int, output string) error {
+		if exitCode != 0 {
+			return fmt.Errorf("unexpected exit code: %d", exitCode)
+		}
+		if got := strings.TrimSpace(output); got != want {
+			return fmt.Errorf("expected %q, got %q", want, got)
+		}
+		return nil
+	}
+}
+
+func getColdfrontTests() []Test {
+	loadAll := `SELECT duckdb.load_extension('iceberg');` +
+		`SELECT duckdb.load_extension('avro');` +
+		`SELECT duckdb.load_extension('azure');` +
+		`SELECT duckdb.load_extension('postgres_scanner');` +
+		`SELECT * FROM duckdb.query('SELECT count(*) FROM duckdb_extensions() ` +
+		`WHERE loaded AND install_path LIKE ''` + rpmExtensionDir + `%''');`
+
+	return []Test{
+		{
+			Name:           "pg_duckdb extension can be created",
+			ColdfrontOnly:  true,
+			Cmd:            `psql -U postgres -d testdb -t -A -c "CREATE EXTENSION IF NOT EXISTS pg_duckdb; SELECT 1;"`,
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "coldfront extension can be created",
+			ColdfrontOnly:  true,
+			Cmd:            `psql -U postgres -d testdb -t -A -c "CREATE EXTENSION IF NOT EXISTS coldfront CASCADE; SELECT 1;"`,
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "DuckDB executes a query",
+			ColdfrontOnly:  true,
+			Cmd:            `psql -U postgres -d testdb -t -A -c "SELECT * FROM duckdb.query('SELECT 42');"`,
+			ExpectedOutput: expectTrimmed("42"),
+		},
+		{
+			Name:           "duckdb.extension_directory points at the package path",
+			ColdfrontOnly:  true,
+			Cmd:            `psql -U postgres -d testdb -t -A -c "SHOW duckdb.extension_directory;"`,
+			ExpectedOutput: expectTrimmed(rpmExtensionDir),
+		},
+		{
+			Name:           "DuckDB extension autoinstall is disabled",
+			ColdfrontOnly:  true,
+			Cmd:            `psql -U postgres -d testdb -t -A -c "SHOW duckdb.autoinstall_known_extensions;"`,
+			ExpectedOutput: expectTrimmed("off"),
+		},
+		{
+			Name:          "all four DuckDB extensions load from the package path",
+			ColdfrontOnly: true,
+			Cmd:           `psql -U postgres -d testdb -t -A -c "` + loadAll + `"`,
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				fields := strings.Fields(strings.TrimSpace(output))
+				if len(fields) == 0 || fields[len(fields)-1] != "4" {
+					return fmt.Errorf("expected 4 extensions loaded from %s, got: %s", rpmExtensionDir, output)
 				}
 				return nil
 			},
