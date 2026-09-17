@@ -245,15 +245,15 @@ def make_all_flavor_images(
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
-        postgres_version="16.15", spock_version="", epoch=2, flavor="postgres",
+        postgres_version="16.15", spock_version="", epoch=3, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="17.11", spock_version="", epoch=2, flavor="postgres",
+        postgres_version="17.11", spock_version="", epoch=3, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="18.6", spock_version="", epoch=2, flavor="postgres",
+        postgres_version="18.6", spock_version="", epoch=3, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     # pg16 images
