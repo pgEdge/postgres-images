@@ -20,13 +20,7 @@
 -- schedule, list, and unschedule its own jobs through those functions,
 -- and a raw INSERT or UPDATE against cron.job as that role is refused
 -- outright, permission denied, with no ownership or row-level-security
--- involved at all. Handing over ownership, an earlier version of this
--- script did, opened a real gap instead: the owner could set username
--- on a new row to any role, including postgres, and pg_cron's launcher
--- would then execute that row in-process, crashing the instance rather
--- than raising a clean permission error. Fixed at the time by forcing
--- row level security on both tables, which was fixing a problem this
--- narrower grant never has: nothing here ever needed ownership to work.
+-- involved at all. Nothing here ever needs ownership to work.
 GRANT USAGE ON SCHEMA cron TO pg_database_owner;
 GRANT SELECT ON cron.job TO pg_database_owner;
 GRANT SELECT ON cron.job_run_details TO pg_database_owner;

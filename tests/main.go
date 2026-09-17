@@ -409,7 +409,7 @@ func (r *TestRunner) Start() error {
 	// Note: We only include extensions that are guaranteed to be in all images
 	sharedLibs := "spock,snowflake"
 	if r.flavor == "standard" {
-		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron"
+		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron,pg_tokenizer"
 	}
 
 	// Build postgres command with required configuration
@@ -949,25 +949,12 @@ func expectFailureContaining(want string) func(exitCode int, output string) erro
 // getExtensionCustomScriptsTests exercises supautils' gate and the
 // extension-custom-scripts this repo ships, not just that the library
 // loads: a non-superuser role installing an allowlisted extension through
-// the gate, the same role refused a non-allowlisted one, lolor's
-// before-create.sql refusing the install without spock, and
-// address_standardizer_data_us's after-create.sql granting access in
-// whichever schema the extension actually landed in, not a hardcoded one.
-//
-// Runs after getCommonExtensionTests, which already installs both spock
-// and lolor as postgres with no supautils configuration in effect
-// (privileged_role is unset at that point, so the gate never engages for
-// either): this drops both first, spock included, so the before-create.sql
-// case below is a genuine spock-absent attempt, not a no-op against a
-// database that already has both from the earlier, unrelated test.
+// the gate, the same role refused a non-allowlisted one, and each
+// extension's after-create.sql granting the database's own owner exactly
+// the access it documents, in whichever schema the extension actually
+// landed in, not a hardcoded one.
 func getExtensionCustomScriptsTests() []Test {
 	return []Test{
-		{
-			Name:           "reset: drop lolor and spock installed earlier with no gate configured",
-			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"DROP EXTENSION IF EXISTS lolor; DROP EXTENSION IF EXISTS spock CASCADE;\"",
-			ExpectedOutput: expectSuccess,
-		},
 		{
 			// Made testdb's actual owner, not just given CREATE on it: the
 			// scripts under test grant to pg_database_owner, a predefined
@@ -997,7 +984,7 @@ func getExtensionCustomScriptsTests() []Test {
 		{
 			Name:           "configure supautils.privileged_extensions",
 			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us, pg_cron';\"",
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us, pg_cron, pg_tokenizer, vchord_bm25, postgis, postgis_tiger_geocoder, postgis_topology';\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1092,9 +1079,9 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name:           "pg_cron after-create.sql lets the owner list its own job",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT jobname FROM cron.job WHERE jobname = 'probe';\"",
+			Name:         "pg_cron after-create.sql lets the owner list its own job",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT jobname FROM cron.job WHERE jobname = 'probe';\"",
 			ExpectedOutput: func(exitCode int, output string) error {
 				if exitCode != 0 {
 					return fmt.Errorf("unexpected exit code: %d", exitCode)
@@ -1106,29 +1093,112 @@ func getExtensionCustomScriptsTests() []Test {
 			},
 		},
 		{
-			Name:           "pg_cron after-create.sql lets the owner unschedule its own job",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.unschedule('probe');\"",
-			ExpectedOutput: expectSuccess,
+			Name:         "pg_cron after-create.sql lets the owner unschedule its own job",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.unschedule('probe');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "t" {
+					return fmt.Errorf("expected the job to be unscheduled, got: %s", output)
+				}
+				return nil
+			},
 		},
 		{
 			// The thing SELECT-only deliberately does not allow: a raw
-			// write against cron.job, which is what let a previous
-			// version of this script's OWNER TO grant be used to set
-			// username on a row to any role, including postgres. No
-			// ownership, no write path, nothing to close after the fact.
+			// write against cron.job. No ownership, no write path.
 			Name:           "pg_cron after-create.sql refuses a raw write to cron.job",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO cron.job (schedule, command, nodename, nodeport, database, username) VALUES ('* * * * *', 'SELECT 1', 'localhost', 5432, 'testdb', 'postgres');\"",
 			ExpectedOutput: expectFailureContaining("permission denied for table job"),
 		},
 		{
-			// spock is not installed in this database, so lolor's
-			// before-create.sql must refuse the install outright.
-			Name:           "lolor before-create.sql refuses install without spock",
+			Name:           "gate installs pg_tokenizer",
 			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION lolor;\"",
-			ExpectedOutput: expectFailureContaining("lolor requires spock"),
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Real query against a real table in tokenizer_catalog, the
+			// same reasoning as address_standardizer_data_us above: a
+			// table grant with no matching schema USAGE fails here even
+			// though has_table_privilege would report true.
+			Name:           "pg_tokenizer after-create.sql granted access to tokenizer_catalog",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs vchord_bm25",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION vchord_bm25;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// bm25_catalog holds only the bm25vector type and its support
+			// functions, no tables: declaring a column of that type is
+			// the real thing the database's owner needs USAGE on the
+			// schema for.
+			Name:           "vchord_bm25 after-create.sql granted access to bm25_catalog",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE bm25_probe(id int, v bm25_catalog.bm25vector);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The earlier, unrelated common extension test already
+			// installed postgis as postgres directly, before the gate
+			// was configured. Drop it so the gate genuinely installs it
+			// below, the same reset pattern used for
+			// address_standardizer_data_us above.
+			Name:           "reset: drop postgis installed by the earlier common test",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"DROP EXTENSION IF EXISTS postgis CASCADE;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// postgis_tiger_geocoder and postgis_topology both depend on
+			// postgis; installed here as the gated role, the same as any
+			// other allowlisted extension.
+			Name:           "gate installs postgis",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs postgis_tiger_geocoder",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis_tiger_geocoder CASCADE;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Real query against a real table in tiger, created at
+			// CREATE EXTENSION time, the same reasoning as
+			// address_standardizer_data_us and pg_tokenizer above.
+			Name:           "postgis_tiger_geocoder after-create.sql granted access to tiger",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tiger.county;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs postgis_topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis_topology;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// CreateTopology() INSERTs into topology.topology and
+			// topology.layer, which needs real ownership of both tables,
+			// not just a grant: unlike pg_cron, postgis_topology's own
+			// functions run as the caller through ordinary ACL-checked
+			// DML, and RenameTopoGeometryColumn() additionally runs
+			// ALTER TABLE ... DISABLE/ENABLE TRIGGER on topology.layer,
+			// which only an owner or superuser can do.
+			Name:           "postgis_topology after-create.sql lets the owner create a topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.CreateTopology('probe_topo', 4326);\"",
+			ExpectedOutput: expectSuccess,
 		},
 	}
 }
