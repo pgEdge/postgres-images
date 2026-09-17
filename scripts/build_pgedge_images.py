@@ -323,10 +323,10 @@ def emit_matrix(config: "Config") -> None:
     The workflow consumes this instead of hardcoding the cell list, so the
     matrix and the image definitions above cannot drift apart.
 
-    An image whose immutable tag is already published is left out of the build
-    matrix unless republish is set, but stays in the merge matrix with
-    needs_build false, so a re-dispatch repairs its mutable tags without
-    rebuilding anything.
+    An image whose immutable tag already carries every requested architecture is
+    left out of the build matrix unless republish is set, but stays in the merge
+    matrix with needs_build false, so a re-dispatch repairs its mutable tags
+    without rebuilding anything.
     """
     arches = [config.only_arch] if config.only_arch else list(ARCH_RUNNERS)
     waves: dict = {}
@@ -341,11 +341,13 @@ def emit_matrix(config: "Config") -> None:
             if image.flavor != flavor or _should_skip_image(image, config):
                 continue
 
-            needs_build = config.republish or not published_digests(
-                config.repo, image.build_tag
+            # Every requested architecture, not merely a published tag: an index
+            # missing one is rebuilt and reassembled rather than carried forward.
+            needs_build = config.republish or not set(arches).issubset(
+                published_platforms(config.repo, image.build_tag)
             )
             if not needs_build:
-                logging.info(f"{image.build_tag} is already published")
+                logging.info(f"{image.build_tag} is already published for {', '.join(arches)}")
 
             merges.append(
                 {
@@ -428,6 +430,29 @@ def published_digests(repo: str, tag: Tag) -> set[str]:
         )
     except subprocess.CalledProcessError:
         return set()
+
+
+def published_platforms(repo: str, tag: Tag) -> set[str]:
+    """Architectures that have a real image manifest under `tag`.
+
+    Attestation manifests sit alongside them with platform unknown, so the
+    presence of a manifest says nothing about coverage: an only-arch run leaves
+    a complete-looking index that holds a single architecture.
+    """
+    try:
+        out = subprocess.check_output(
+            imagetools_cmd("inspect", "--raw", f"{repo}:{tag}"),
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError:
+        return set()
+
+    platforms = set()
+    for manifest in json.loads(out).get("manifests", []):
+        arch = manifest.get("platform", {}).get("architecture")
+        if arch and arch != "unknown":
+            platforms.add(arch)
+    return platforms
 
 
 def build(
