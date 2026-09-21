@@ -946,6 +946,22 @@ func expectFailureContaining(want string) func(exitCode int, output string) erro
 	}
 }
 
+// expectOutputContaining returns an ExpectedOutput func for a command that
+// must succeed and whose output must contain want. Used where the exit code
+// alone proves nothing, because the query returns a value that is the actual
+// assertion rather than erroring when it fails.
+func expectOutputContaining(want string) func(exitCode int, output string) error {
+	return func(exitCode int, output string) error {
+		if exitCode != 0 {
+			return fmt.Errorf("unexpected exit code: %d, output: %s", exitCode, output)
+		}
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("expected output containing %q, got: %s", want, output)
+		}
+		return nil
+	}
+}
+
 // getExtensionCustomScriptsTests exercises supautils' gate and the
 // extension-custom-scripts this repo ships, not just that the library
 // loads: a non-superuser role installing an allowlisted extension through
@@ -1323,6 +1339,45 @@ func getExtensionCustomScriptsTests() []Test {
 			StandardOnly:   true,
 			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
 			ExpectedOutput: expectFailureContaining("permission denied for schema cron"),
+		},
+		{
+			// Stands in for a function an extension upgrade adds after
+			// after-create.sql has already run. The REVOKE in that script
+			// only reaches functions that exist when it runs, and
+			// ALTER DEFAULT PRIVILEGES cannot cover the gap, since
+			// Postgres seeds every new function with EXECUTE to PUBLIC
+			// and default privileges only add to that, never remove it.
+			// Created as postgres because tokenizer_catalog is owned by
+			// postgres, which is also who runs a gated install.
+			Name:           "a function added to tokenizer_catalog after install",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE FUNCTION tokenizer_catalog.upgrade_probe(text) RETURNS text LANGUAGE sql AS 'SELECT \\$1';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "third-party role refused a function added after install",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.upgrade_probe('x');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function upgrade_probe"),
+		},
+		{
+			// The lockdown re-grants pg_database_owner explicitly, so the
+			// database's owner keeps a function an upgrade adds rather
+			// than losing it along with PUBLIC.
+			Name:           "database owner keeps a function added after install",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.upgrade_probe('x');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The event trigger is database-wide, so it has to leave
+			// functions outside tokenizer_catalog on Postgres' own
+			// default. Without the schema check it would silently strip
+			// EXECUTE from every function anyone creates.
+			Name:           "a function outside tokenizer_catalog keeps the PUBLIC default",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE SCHEMA untouched; CREATE FUNCTION untouched.probe(text) RETURNS text LANGUAGE sql AS 'SELECT \\$1'; SELECT has_function_privilege('public', 'untouched.probe(text)', 'EXECUTE');\"",
+			ExpectedOutput: expectOutputContaining("t"),
 		},
 	}
 }
