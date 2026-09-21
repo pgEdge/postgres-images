@@ -133,6 +133,20 @@ EOF
 ENV PGDATA=/var/lib/pgsql/${POSTGRES_MAJOR_VERSION}/data
 RUN install --verbose --directory --owner postgres --group postgres --mode 1777 "$PGDATA"
 
+# supautils.extension_custom_scripts_path scripts. Baked into the image
+# rather than a runtime mount: supautils reads these from a plain
+# filesystem path with no other configuration hook available. See
+# extension-custom-scripts/README.md for the convention new scripts
+# follow.
+#
+# This only places the scripts at a well-known path; it does not load
+# supautils or point supautils.extension_custom_scripts_path at this
+# directory. Neither is set anywhere in this image, deliberately, the
+# same as every other supautils.* setting here: shared_preload_libraries
+# is empty by default, so a deployment that wants any of this configures
+# it itself in its own postgresql.conf or equivalent.
+COPY --chown=postgres:postgres extension-custom-scripts /etc/pgedge/extension-custom-scripts
+
 USER postgres
 
 ENV PG_MAJOR=${POSTGRES_MAJOR_VERSION}

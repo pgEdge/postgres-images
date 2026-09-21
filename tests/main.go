@@ -409,7 +409,7 @@ func (r *TestRunner) Start() error {
 	// Note: We only include extensions that are guaranteed to be in all images
 	sharedLibs := "spock,snowflake"
 	if r.flavor == "standard" {
-		sharedLibs = "spock,snowflake,pgaudit,supautils"
+		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron,pg_tokenizer"
 	}
 
 	// Build postgres command with required configuration
@@ -422,6 +422,11 @@ func (r *TestRunner) Start() error {
 		"-c", "max_replication_slots=10",
 		"-c", "max_wal_senders=10",
 		"-c", "snowflake.node=1",
+	}
+	if r.flavor == "standard" {
+		// pg_cron only ever installs into the one database this names,
+		// and refuses CREATE EXTENSION anywhere else.
+		cmd = append(cmd, "-c", "cron.database_name=testdb", "-c", "cron.use_background_workers=on")
 	}
 
 	resp, err := r.cli.ContainerCreate(r.ctx, &container.Config{
@@ -669,7 +674,7 @@ func buildTestSuite(spockMajor string) []Test {
 
 // getSpockVersionTests asserts that the spock extension installed in the image
 // matches the major version advertised by the image tag. This distinguishes,
-// for example, a spock6 image from a spock5 image — a mismatch would otherwise
+// for example, a spock6 image from a spock5 image, a mismatch would otherwise
 // pass every other test unnoticed. Returns no tests when the expected major
 // version could not be derived from the image tag.
 func getSpockVersionTests(spockMajor string) []Test {
@@ -789,7 +794,8 @@ func getCommonExtensionTests() []Test {
 
 func getStandardOnlyTests() []Test {
 	tests := append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
-	return append(tests, getSupautilsTests()...)
+	tests = append(tests, getSupautilsTests()...)
+	return append(tests, getExtensionCustomScriptsTests()...)
 }
 
 func getSupautilsTests() []Test {
@@ -920,4 +926,403 @@ func expectSuccess(exitCode int, output string) error {
 		return fmt.Errorf("unexpected exit code: %d", exitCode)
 	}
 	return nil
+}
+
+// expectFailureContaining returns an ExpectedOutput func for a command that
+// must fail (a non-zero exit from psql -c means the statement errored), with
+// the error text containing want. Used for every negative case below: a
+// plain non-zero exit code alone would also pass for the wrong reason (a
+// typo'd role name, a connection failure), so the actual error text is
+// checked too.
+func expectFailureContaining(want string) func(exitCode int, output string) error {
+	return func(exitCode int, output string) error {
+		if exitCode == 0 {
+			return fmt.Errorf("expected failure, got success: %s", output)
+		}
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("expected output containing %q, got: %s", want, output)
+		}
+		return nil
+	}
+}
+
+// getExtensionCustomScriptsTests exercises supautils' gate and the
+// extension-custom-scripts this repo ships, not just that the library
+// loads: a non-superuser role installing an allowlisted extension through
+// the gate, the same role refused a non-allowlisted one, and each
+// extension's after-create.sql granting the database's own owner exactly
+// the access it documents, in whichever schema the extension actually
+// landed in, not a hardcoded one.
+func getExtensionCustomScriptsTests() []Test {
+	return []Test{
+		{
+			// Made testdb's actual owner, not just given CREATE on it: the
+			// scripts under test grant to pg_database_owner, a predefined
+			// role whose membership tracks whoever currently owns the
+			// database, and testdb starts out owned by postgres, a
+			// superuser that bypasses every ACL check regardless of what
+			// gets granted. Without this, checking pg_database_owner's
+			// access would really be checking postgres's, which proves
+			// nothing.
+			Name:           "create the non-superuser role the gate tests connect as",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE gate_test_role LOGIN NOSUPERUSER; ALTER DATABASE testdb OWNER TO gate_test_role; ALTER ROLE gate_test_role SET session_preload_libraries = 'supautils';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.privileged_role",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_role = 'gate_test_role';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.superuser",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.superuser = 'postgres';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.privileged_extensions",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us, pg_cron, pg_tokenizer, vchord_bm25, postgis, postgis_tiger_geocoder, postgis_topology';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "configure supautils.extension_custom_scripts_path",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.extension_custom_scripts_path = '/etc/pgedge/extension-custom-scripts';\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "reload for the new supautils settings to take effect",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"SELECT pg_reload_conf();\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// dblink is untrusted and not on the allowlist configured above:
+			// the gate must refuse it for a non-superuser role the same way
+			// Postgres core would refuse any untrusted extension.
+			Name:           "gate refuses a non-allowlisted extension",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION dblink;\"",
+			ExpectedOutput: expectFailureContaining("Must be superuser"),
+		},
+		{
+			// address_standardizer is a dependency address_standardizer_data_us
+			// needs installed first; both are on the allowlist configured above.
+			Name:           "gate allows an allowlisted extension",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION address_standardizer; CREATE EXTENSION address_standardizer_data_us;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Confirms after-create.sql actually ran and granted access,
+			// not just that the extension installed: gate_test_role has no
+			// grant of its own on these tables, only what the script gave
+			// pg_database_owner, which gate_test_role belongs to by owning
+			// testdb (see the role-creation step above). Runs the real
+			// query, not a has_table_privilege check: that check only
+			// covers the table-level grant, missing a separate, real bug
+			// this exact test caught once already, a table grant with no
+			// matching schema USAGE, which fails at query time despite
+			// has_table_privilege reporting true.
+			Name:           "address_standardizer_data_us after-create.sql granted access",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM us_lex;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Reproduces the case the schema lookup in after-create.sql
+			// exists for: an explicit SCHEMA clause lands the tables
+			// somewhere other than public, and the grant must still land
+			// on the actual schema, not a hardcoded one.
+			Name:           "address_standardizer_data_us after-create.sql follows an explicit SCHEMA clause",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE SCHEMA relocated_gis; DROP EXTENSION address_standardizer_data_us; DROP EXTENSION address_standardizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "reinstall address_standardizer_data_us into the relocated schema",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION address_standardizer SCHEMA relocated_gis; CREATE EXTENSION address_standardizer_data_us SCHEMA relocated_gis;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Real query again, for the same reason as the default-schema
+			// case above, and specifically the one where a missing schema
+			// USAGE grant would actually surface: public grants USAGE to
+			// PUBLIC by default, so the default-schema case would have
+			// passed even without it, this relocated schema has no such
+			// default and only passes if the script's own USAGE grant
+			// worked.
+			Name:           "address_standardizer_data_us after-create.sql found the relocated schema",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM relocated_gis.us_lex;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs pg_cron",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_cron;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_cron's after-create.sql grants USAGE + SELECT only, no
+			// ownership: schedule() writes to cron.job through pg_cron's
+			// own internal code, not a caller-privileged INSERT, so
+			// SELECT is enough for the database's owner to schedule its
+			// own jobs directly.
+			Name:           "pg_cron after-create.sql lets the owner schedule its own job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:         "pg_cron after-create.sql lets the owner list its own job",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT jobname FROM cron.job WHERE jobname = 'probe';\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "probe" {
+					return fmt.Errorf("expected to see the scheduled job, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			Name:         "pg_cron after-create.sql lets the owner unschedule its own job",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.unschedule('probe');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "t" {
+					return fmt.Errorf("expected the job to be unscheduled, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// The thing SELECT-only deliberately does not allow: a raw
+			// write against cron.job. No ownership, no write path.
+			Name:           "pg_cron after-create.sql refuses a raw write to cron.job",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO cron.job (schedule, command, nodename, nodeport, database, username) VALUES ('* * * * *', 'SELECT 1', 'localhost', 5432, 'testdb', 'postgres');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for table job"),
+		},
+		{
+			Name:           "gate installs pg_tokenizer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Real query against a real table in tokenizer_catalog, the
+			// same reasoning as address_standardizer_data_us above: a
+			// table grant with no matching schema USAGE fails here even
+			// though has_table_privilege would report true.
+			Name:           "pg_tokenizer after-create.sql granted access to tokenizer_catalog",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs vchord_bm25",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION vchord_bm25;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// bm25_catalog holds only the bm25vector type and its support
+			// functions, no tables: declaring a column of that type is
+			// the real thing the database's owner needs USAGE on the
+			// schema for.
+			Name:           "vchord_bm25 after-create.sql granted access to bm25_catalog",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE bm25_probe(id int, v bm25_catalog.bm25vector);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The earlier, unrelated common extension test already
+			// installed postgis as postgres directly, before the gate
+			// was configured. Drop it so the gate genuinely installs it
+			// below, the same reset pattern used for
+			// address_standardizer_data_us above.
+			Name:           "reset: drop postgis installed by the earlier common test",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"DROP EXTENSION IF EXISTS postgis CASCADE;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// postgis_tiger_geocoder and postgis_topology both depend on
+			// postgis; installed here as the gated role, the same as any
+			// other allowlisted extension.
+			Name:           "gate installs postgis",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs postgis_tiger_geocoder",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis_tiger_geocoder CASCADE;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// Real query against a real table in tiger, created at
+			// CREATE EXTENSION time, the same reasoning as
+			// address_standardizer_data_us and pg_tokenizer above.
+			Name:           "postgis_tiger_geocoder after-create.sql granted access to tiger",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tiger.county;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "gate installs postgis_topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION postgis_topology;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// CreateTopology() INSERTs into topology.topology and
+			// topology.layer, which needs real ownership of both tables,
+			// not just a grant: unlike pg_cron, postgis_topology's own
+			// functions run as the caller through ordinary ACL-checked
+			// DML, and RenameTopoGeometryColumn() additionally runs
+			// ALTER TABLE ... DISABLE/ENABLE TRIGGER on topology.layer,
+			// which only an owner or superuser can do.
+			Name:           "postgis_topology after-create.sql lets the owner create a topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.CreateTopology('probe_topo', 4326);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// AddTopoGeometryColumn only needs INSERT, which a plain
+			// grant already covers, so this alone would pass even
+			// without ownership. Included for lifecycle completeness,
+			// the real proof is the rename step below.
+			Name:           "postgis_topology after-create.sql lets the owner register a layer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE probe_feat(id serial primary key); SELECT topology.AddTopoGeometryColumn('probe_topo', 'public', 'probe_feat', 'g', 'POLYGON');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// This is the one call in the whole lifecycle that a plain
+			// grant cannot satisfy: RenameTopoGeometryColumn() runs
+			// ALTER TABLE topology.layer DISABLE/ENABLE TRIGGER, which
+			// needs real ownership. Confirmed directly: a role with
+			// full DML and even the TRIGGER privilege on both tables
+			// still gets "must be owner of table layer" here, so this
+			// is the test that actually proves the ownership handoff
+			// is doing something, not just that CreateTopology's INSERT
+			// happens to work.
+			Name:           "postgis_topology after-create.sql lets the owner rename a layer column",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.RenameTopoGeometryColumn('probe_feat', 'g', 'g2');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "postgis_topology after-create.sql lets the owner drop a topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.DropTopology('probe_topo');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// A role the database's owner creates itself, not the
+			// owner and not a member of pg_database_owner: none of the
+			// grants above reach it through membership at all, so this
+			// is what actually proves the PUBLIC grant, not just that
+			// pg_database_owner has access.
+			Name:           "create a third-party role the owner does not control access through",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE reporting_role LOGIN NOSUPERUSER;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_database_owner's own grant carries no GRANT OPTION,
+			// so the owner has no way to pass this on by hand either;
+			// confirms that silent no-op rather than assuming it.
+			Name:         "owner re-granting schema access by hand is a silent no-op",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"GRANT USAGE ON SCHEMA tiger TO reporting_role;\" 2>&1",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if !strings.Contains(output, "no privileges were granted") {
+					return fmt.Errorf("expected a no-op warning, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// Reads relocated_gis.us_lex, not the bare table name: an
+			// earlier test in this suite already relocated
+			// address_standardizer_data_us there via an explicit
+			// SCHEMA clause.
+			Name:           "third-party role reaches address_standardizer_data_us via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT count(*) FROM relocated_gis.us_lex;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "third-party role reaches postgis_tiger_geocoder via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT normalize_address('1 Devonshire Pl, Boston, MA 02109');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "third-party role reaches vchord_bm25/pg_tokenizer via PUBLIC",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT pg_typeof('{1:1}'::bm25_catalog.bm25vector); SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The write side stays pg_database_owner-only regardless
+			// of the PUBLIC read grant above.
+			Name:           "third-party role still refused a tokenizer_catalog write",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.tokenizer(name) VALUES ('probe');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for table tokenizer"),
+		},
+		{
+			// Schema USAGE makes every function in tokenizer_catalog
+			// resolvable, and Postgres grants EXECUTE on new functions
+			// to PUBLIC by default, so without this REVOKE a
+			// third-party role could reach config-parsing/model-loading
+			// functions that were never meant to be public, none of
+			// them SECURITY DEFINER, but still real work running before
+			// any table-ACL check fires. Confirmed cleanly refused at
+			// the function call itself now, not at some later step.
+			Name:           "third-party role refused the tokenizer_catalog config-management functions",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe', 'x');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
+		},
+		{
+			// The three functions the read-only use case actually
+			// needs stay PUBLIC-executable: tokenize() and
+			// apply_text_analyzer() to process text against an
+			// existing configuration, list_preload_models() to see
+			// what's available.
+			Name:           "third-party role keeps the read-only tokenizer_catalog functions",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.list_preload_models();\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// pg_cron is deliberately not part of this fix: cron.job is
+			// already scoped per username by its own row-level security
+			// policy, a PUBLIC grant here would not change what a
+			// third-party role can see or do with it.
+			Name:           "third-party role still has no path into pg_cron",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for schema cron"),
+		},
+	}
 }
