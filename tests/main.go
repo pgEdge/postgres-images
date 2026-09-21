@@ -242,6 +242,9 @@ func printSummary(errorCount int, flavor, spockMajor string) {
 	if includesStandard(flavor) {
 		testsRun++ // patroni entrypoint
 	}
+	if flavor == "coldfront" {
+		testsRun++ // coldfront entrypoint
+	}
 
 	fmt.Println()
 	fmt.Println("Test Summary")
