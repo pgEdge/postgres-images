@@ -6,7 +6,7 @@ pgedge-python3-psycopg2-2.9.12-1.el9
 pgedge-pgmq_17-1.13.0-1.el9
 pgedge-pg_cron_17-1.6.8-1.el9
 pgedge-pg-tokenizer_17-0.1.1-1.el9
-pgedge-pg-vectorize_17-0.23.0-1.el9
+pgedge-pg-vectorize_17-0.27.1-1.el9
 pgedge-pg-stat-monitor_17-2.4.0-1.el9
 pgedge-vchord-bm25_17-0.2.2-1.el9
 pgedge-vectorizer_17-1.1-1.el9
