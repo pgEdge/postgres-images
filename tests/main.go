@@ -556,7 +556,7 @@ func (r *TestRunner) Start() error {
 	if includesMinimal(r.flavor) {
 		cmd = append(cmd, "-c", "snowflake.node=1")
 	}
-	if r.flavor == "standard" {
+	if includesStandard(r.flavor) {
 		// pg_cron only ever installs into the one database this names,
 		// and refuses CREATE EXTENSION anywhere else.
 		cmd = append(cmd, "-c", "cron.database_name=testdb", "-c", "cron.use_background_workers=on")
