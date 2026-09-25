@@ -1,11 +1,11 @@
--- Read access to the reference tables the extension's own functions
--- query (tiger.*, created at CREATE EXTENSION time). The actual
--- Census dataset a user bulk-loads afterward is a separate step this
--- script cannot reach, it only runs once, at CREATE EXTENSION time.
+-- Every role can read the tables in the tiger schema, including
+-- tables added to it later, which is enough for normalize_address(),
+-- pprint_addy(), and geocode() against whatever data is loaded. No
+-- role but the installing superuser can modify them.
 --
--- Also granted to PUBLIC: pg_database_owner's own grant carries no
--- GRANT OPTION, so there is no way to pass it on to another role
--- afterward, and the attempt is a silent no-op, not an error.
+-- Loading the Census TIGER dataset still requires a superuser: the
+-- loader creates tables that inherit from the ones in tiger, and
+-- inheriting from a table requires owning it.
 GRANT USAGE ON SCHEMA tiger TO pg_database_owner, PUBLIC;
 GRANT SELECT ON ALL TABLES IN SCHEMA tiger TO pg_database_owner, PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA tiger

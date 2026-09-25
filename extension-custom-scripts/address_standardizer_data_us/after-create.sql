@@ -1,38 +1,13 @@
--- us_lex/us_gaz/us_rules land wherever the extension itself was
--- installed, owned by the supautils superuser. Unlike the other five
--- scripts in this directory, this extension is relocatable
--- (control file has no fixed schema), so a caller can run
--- CREATE EXTENSION address_standardizer_data_us SCHEMA gis and these
--- three tables land in gis, not public. A hardcoded public.us_lex
--- here would silently fail against relations that don't exist in
--- that case, which is why this looks the schema up at runtime rather
--- than assuming it.
+-- Every role can read the us_lex, us_gaz, and us_rules reference
+-- tables that standardize_address() takes as arguments. No role but
+-- the installing superuser can modify them.
 --
--- Looked up via pg_extension.extnamespace rather than supautils' own
--- @extschema@ substitution: that token is only populated when the
--- caller's CREATE EXTENSION included an explicit SCHEMA clause, and
--- is otherwise substituted as SQL NULL, which is the common case
--- (no explicit SCHEMA at all). pg_extension.extnamespace is populated
--- unconditionally, by Postgres itself, once the extension exists, so
--- it covers both cases with the same query.
---
--- Granted to pg_database_owner rather than a hardcoded role name, so
--- this keeps working if the database is later reassigned to a
--- different owner. See
--- https://www.postgresql.org/docs/current/predefined-roles.html.
---
--- Also grants USAGE on the schema itself, not just SELECT on the
--- tables: table-level SELECT alone is not enough to query a table
--- outside the search path, Postgres separately checks USAGE on the
--- schema before it will even look a table up in it. The default,
--- unrelocated case (public) happens to work without this, since
--- public grants USAGE to PUBLIC by default, but a schema named on an
--- explicit SCHEMA clause has no such default and would otherwise
--- leave pg_database_owner with a grant it can never actually use.
---
--- Also granted to PUBLIC: pg_database_owner's own grant carries no
--- GRANT OPTION, so there is no way to pass it on to another role
--- afterward, and the attempt is a silent no-op, not an error.
+-- The extension can be installed into any schema, so the schema is
+-- read from pg_extension rather than assumed to be public. supautils'
+-- @extschema@ cannot stand in for the lookup: it is set only when
+-- CREATE EXTENSION names a schema, and is NULL otherwise. USAGE on
+-- that schema is granted too, since table access alone does not reach
+-- a table in a schema the role cannot use.
 DO $$
 DECLARE ext_schema name;
 BEGIN
