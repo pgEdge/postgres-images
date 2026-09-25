@@ -1,0 +1,2 @@
+pgedge-postgresql16-16.15-1.el9
+pgedge-postgresql16-server-16.15-1.el9
