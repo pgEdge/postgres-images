@@ -1011,7 +1011,7 @@ func getExtensionCustomScriptsTests() []Test {
 		{
 			// address_standardizer is a dependency address_standardizer_data_us
 			// needs installed first; both are on the allowlist configured above.
-			Name:           "gate allows an allowlisted extension",
+			Name:           "gate installs address_standardizer_data_us, an allowlisted extension",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION address_standardizer; CREATE EXTENSION address_standardizer_data_us;\"",
 			ExpectedOutput: expectSuccess,
@@ -1093,6 +1093,41 @@ func getExtensionCustomScriptsTests() []Test {
 			},
 		},
 		{
+			// Calling schedule() again with the same job name updates the
+			// job in place: same jobid, new schedule and command. That is
+			// how the owner changes a job, since alter_job() stays revoked.
+			Name:         "pg_cron after-create.sql lets the owner change its own job by name",
+			StandardOnly: true,
+			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '*/5 * * * *', 'SELECT 2');\" -c \"SELECT count(*), min(schedule), min(command) FROM cron.job WHERE jobname = 'probe';\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if !strings.Contains(output, "1|*/5 * * * *|SELECT 2") {
+					return fmt.Errorf("expected the one job updated in place, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// alter_job() can move a job to another database the owner
+			// has CONNECT on, which pg_cron's workers reach without going
+			// through pg_hba.conf, so it stays revoked from PUBLIC the
+			// way pg_cron leaves it at install time.
+			Name:           "pg_cron after-create.sql refuses alter_job()",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.alter_job((SELECT jobid FROM cron.job WHERE jobname = 'probe'), database => 'postgres');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function alter_job"),
+		},
+		{
+			// schedule_in_database() stays revoked for the same reason,
+			// so a job always runs in the database that scheduled it.
+			Name:           "pg_cron after-create.sql refuses schedule_in_database()",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.schedule_in_database('probe_other_db', '* * * * *', 'SELECT 1', 'postgres');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function schedule_in_database"),
+		},
+		{
 			Name:         "pg_cron after-create.sql lets the owner unschedule its own job",
 			StandardOnly: true,
 			Cmd:          "psql -U gate_test_role -d testdb -t -A -c \"SELECT cron.unschedule('probe');\"",
@@ -1128,6 +1163,53 @@ func getExtensionCustomScriptsTests() []Test {
 			Name:           "pg_tokenizer after-create.sql granted access to tokenizer_catalog",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The configuration functions run as the caller and write the
+			// catalog tables with ordinary DML, so EXECUTE alone is not
+			// enough: each create_* call below fails with "permission
+			// denied for table ..." unless after-create.sql also grants
+			// the owner INSERT, UPDATE, and DELETE on those tables. The
+			// tokenizer is left in place for the third-party role's
+			// tokenize() case below, and dropped after it.
+			Name:           "pg_tokenizer after-create.sql lets the owner create a text analyzer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_text_analyzer('probe_analyzer', $$ pre_tokenizer = 'unicode_segmentation' $$);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "pg_tokenizer after-create.sql lets the owner create a tokenizer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_tokenizer', $$ model = 'bert_base_uncased' $$);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "pg_tokenizer after-create.sql lets the owner create a stopword list",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_stopwords('probe_stopwords', E'it\\nis\\na');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "pg_tokenizer after-create.sql lets the owner create a synonym list",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_synonym('probe_synonyms', 'pgsql postgres postgresql');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// A superuser adding a table to tokenizer_catalog after
+			// install, as an extension upgrade would: the default
+			// privileges after-create.sql sets give the owner write
+			// access to it without the script being run again.
+			Name:           "pg_tokenizer after-create.sql default privileges cover a table added later",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE TABLE tokenizer_catalog.probe_added_later(id int);\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "pg_tokenizer after-create.sql lets the owner write a table added later",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.probe_added_later VALUES (1); UPDATE tokenizer_catalog.probe_added_later SET id = 2; DELETE FROM tokenizer_catalog.probe_added_later;\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1188,47 +1270,75 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			// CreateTopology() INSERTs into topology.topology and
-			// topology.layer, which needs real ownership of both tables,
-			// not just a grant: unlike pg_cron, postgis_topology's own
-			// functions run as the caller through ordinary ACL-checked
-			// DML, and RenameTopoGeometryColumn() additionally runs
-			// ALTER TABLE ... DISABLE/ENABLE TRIGGER on topology.layer,
-			// which only an owner or superuser can do.
+			// Every gated extension with a script is installed by now.
+			// None of their tables may be owned by the database's owner:
+			// a table's owner can attach a trigger to it, and the trigger
+			// runs as whoever writes the table next. When topology.layer
+			// was handed to pg_database_owner, a trigger the owner put
+			// there ran as any superuser who later called
+			// AddTopoGeometryColumn(), which was enough to create a
+			// SUPERUSER role. pg_has_role() counts objects owned through
+			// membership too, which is how pg_database_owner's own
+			// objects show up here.
+			Name:         "no extension table is owned by the database's owner",
+			StandardOnly: true,
+			Cmd:          "psql -U postgres -d testdb -t -A -c \"SELECT count(*) FROM pg_class c JOIN pg_depend d ON d.objid = c.oid AND d.classid = 'pg_class'::regclass AND d.deptype = 'e' WHERE pg_has_role('gate_test_role', c.relowner, 'USAGE');\"",
+			ExpectedOutput: func(exitCode int, output string) error {
+				if exitCode != 0 {
+					return fmt.Errorf("unexpected exit code: %d", exitCode)
+				}
+				if strings.TrimSpace(output) != "0" {
+					return fmt.Errorf("expected no extension tables owned by the database's owner, got: %s", output)
+				}
+				return nil
+			},
+		},
+		{
+			// postgis_topology's functions run as the caller and write
+			// topology.topology and topology.layer with ordinary
+			// ACL-checked DML, unlike pg_cron's. The DML grants in
+			// after-create.sql are what let the owner run the lifecycle
+			// below; the tables themselves stay owned by the installing
+			// superuser.
 			Name:           "postgis_topology after-create.sql lets the owner create a topology",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.CreateTopology('probe_topo', 4326);\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			// AddTopoGeometryColumn only needs INSERT, which a plain
-			// grant already covers, so this alone would pass even
-			// without ownership. Included for lifecycle completeness,
-			// the real proof is the rename step below.
 			Name:           "postgis_topology after-create.sql lets the owner register a layer",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE probe_feat(id serial primary key); SELECT topology.AddTopoGeometryColumn('probe_topo', 'public', 'probe_feat', 'g', 'POLYGON');\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			// This is the one call in the whole lifecycle that a plain
-			// grant cannot satisfy: RenameTopoGeometryColumn() runs
-			// ALTER TABLE topology.layer DISABLE/ENABLE TRIGGER, which
-			// needs real ownership. Confirmed directly: a role with
-			// full DML and even the TRIGGER privilege on both tables
-			// still gets "must be owner of table layer" here, so this
-			// is the test that actually proves the ownership handoff
-			// is doing something, not just that CreateTopology's INSERT
-			// happens to work.
-			Name:           "postgis_topology after-create.sql lets the owner rename a layer column",
+			// The one call in the lifecycle the owner cannot make, by
+			// design: RenameTopoGeometryColumn() runs ALTER TABLE
+			// topology.layer DISABLE/ENABLE TRIGGER, which needs
+			// ownership of the table, and after-create.sql deliberately
+			// leaves that with the installing superuser. Checks the
+			// error text so this cannot pass for an unrelated reason.
+			Name:           "postgis_topology after-create.sql does not let the owner rename a layer column",
 			StandardOnly:   true,
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.RenameTopoGeometryColumn('probe_feat', 'g', 'g2');\"",
+			ExpectedOutput: expectFailureContaining("must be owner of table layer"),
+		},
+		{
+			Name:           "postgis_topology after-create.sql lets the owner rename a topology",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.RenameTopology('probe_topo', 'probe_topo2');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "postgis_topology after-create.sql lets the owner drop a layer",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.DropTopoGeometryColumn('public', 'probe_feat', 'g');\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
 			Name:           "postgis_topology after-create.sql lets the owner drop a topology",
 			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.DropTopology('probe_topo');\"",
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT topology.DropTopology('probe_topo2');\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1304,6 +1414,15 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
 		},
 		{
+			// A model function parses its configuration and loads a model
+			// before it writes anything, so refusing it at EXECUTE, not at
+			// the table write, is what keeps that work from running.
+			Name:           "third-party role refused the tokenizer_catalog model functions",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_huggingface_model('probe', 'x');\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function create_huggingface_model"),
+		},
+		{
 			// The three functions the read-only use case actually
 			// needs stay PUBLIC-executable: tokenize() and
 			// apply_text_analyzer() to process text against an
@@ -1315,6 +1434,15 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
+			// Against the tokenizer and text analyzer the owner created
+			// above: the configuration the owner manages is usable by
+			// every role, not only readable.
+			Name:           "third-party role uses the owner's tokenizer and text analyzer",
+			StandardOnly:   true,
+			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.tokenize('PostgreSQL is great', 'probe_tokenizer'); SELECT tokenizer_catalog.apply_text_analyzer('PostgreSQL is great', 'probe_analyzer');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
 			// pg_cron is deliberately not part of this fix: cron.job is
 			// already scoped per username by its own row-level security
 			// policy, a PUBLIC grant here would not change what a
@@ -1323,6 +1451,37 @@ func getExtensionCustomScriptsTests() []Test {
 			StandardOnly:   true,
 			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT cron.schedule('probe', '* * * * *', 'SELECT 1');\"",
 			ExpectedOutput: expectFailureContaining("permission denied for schema cron"),
+		},
+		{
+			// Dropped only now, after the third-party role's tokenize()
+			// case above has used them.
+			Name:           "pg_tokenizer after-create.sql lets the owner drop what it created",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.drop_synonym('probe_synonyms'); SELECT tokenizer_catalog.drop_stopwords('probe_stopwords'); SELECT tokenizer_catalog.drop_tokenizer('probe_tokenizer'); SELECT tokenizer_catalog.drop_text_analyzer('probe_analyzer');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			// The reason every script grants to pg_database_owner rather
+			// than to a named role: the grants follow the database to a
+			// new owner, and the old owner loses them, without any
+			// script running again. Runs last, since every case above
+			// connects as gate_test_role expecting it to own testdb.
+			Name:           "reassign testdb to a new owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE ROLE new_owner_role LOGIN NOSUPERUSER; ALTER DATABASE testdb OWNER TO new_owner_role;\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "new owner inherits the grants after-create.sql gave pg_database_owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U new_owner_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$); SELECT tokenizer_catalog.drop_tokenizer('probe_reassigned');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "former owner loses the grants after-create.sql gave pg_database_owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$);\"",
+			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
 		},
 	}
 }

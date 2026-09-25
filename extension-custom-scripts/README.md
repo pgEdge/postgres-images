@@ -2,12 +2,12 @@
 
 Scripts for `supautils.extension_custom_scripts_path`, baked into the
 `standard` image at `/etc/pgedge/extension-custom-scripts`. supautils
-runs these around `CREATE EXTENSION`, as the superuser session it
-already switches to for a privileged install (see
-`supautils.superuser`), so a script here can assume superuser
-privileges, not just the installing role's own.
+runs these around `CREATE EXTENSION` as the superuser session it
+switches to for a privileged install (see `supautils.superuser`), so a
+script here runs with superuser privileges, not the installing role's.
 
-Layout, per [supautils' own convention](https://github.com/supabase/supautils#readme):
+The layout follows
+[supautils' own convention](https://github.com/supabase/supautils#readme):
 
 ```
 extension-custom-scripts/
@@ -16,13 +16,42 @@ extension-custom-scripts/
     after-create.sql    # optional, runs after CREATE EXTENSION
 ```
 
-This image is not exclusive to any one deployment's role model, and an
-extension can be installed into any database, owned by whatever role
-happens to own it. A script granting access to "the role that should be
-able to use this" should grant to
+## Rules for a script
+
+Grant access to
 [`pg_database_owner`](https://www.postgresql.org/docs/current/predefined-roles.html#PREDEFINED-ROLE-PG-DATABASE-OWNER),
-not a hardcoded role name: Postgres automatically maintains membership
-in this predefined role to match whoever currently owns the database,
-so the grant keeps working even if that database is later reassigned
-to a different owner, and needs no assumption about what the owner is
-named. See `pg_cron`'s `after-create.sql` for the pattern.
+not to a named role. Postgres keeps this role's membership in sync
+with whoever owns the database, so the grant follows the database if
+it is reassigned to a new owner. A grant to `pg_database_owner` carries
+no grant option, so the owner cannot pass it on; anything every role
+should have is granted to `PUBLIC` as well.
+
+Grant privileges, and leave ownership with the installing superuser.
+The owner of a table can attach a trigger to it, and a trigger runs
+with the privileges of whoever writes to the table rather than those
+of its owner. Handing a table to `pg_database_owner` therefore lets
+the database's owner run code as any superuser that later writes to
+that table.
+
+Keep write access narrower than read access. Where a table holds
+configuration, `PUBLIC` reads it and only `pg_database_owner` changes
+it.
+
+Write each statement against the objects the installed version
+actually creates. A script runs inside the `CREATE EXTENSION`
+transaction, so an error in it rolls back the install and leaves the
+extension uninstallable until the script is fixed. The image test
+suite installs every extension that has a script, which is what
+catches a name that a new extension version changed.
+
+A script runs only on `CREATE EXTENSION`, not on
+`ALTER EXTENSION ... UPDATE`. Objects an upgrade adds are covered only
+where a script sets default privileges for them; otherwise the script
+has to be run again by hand after the upgrade.
+
+An extension that declares no fixed schema can be installed into any
+schema with `CREATE EXTENSION ... SCHEMA`, so its script looks the
+schema up from `pg_extension` instead of assuming `public`. supautils'
+`@extschema@` substitution cannot replace the lookup: it is set only
+when `CREATE EXTENSION` names a schema, and is NULL otherwise. See
+`address_standardizer_data_us`.
