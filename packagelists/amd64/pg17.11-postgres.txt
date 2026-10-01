@@ -1,0 +1,2 @@
+pgedge-postgresql17-17.11-1.el9
+pgedge-postgresql17-server-17.11-1.el9
