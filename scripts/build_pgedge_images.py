@@ -226,7 +226,7 @@ def make_flavor_images(
     epochs: dict[str, int],
     is_latest_for_pg_major: bool = False,
     is_latest_for_spock_major: bool = False,
-    package_release_channel: str = "",
+    channels: dict[str, str] = None,
 ) -> list[PgEdgeImage]:
     """Build one image per entry in `epochs`, which maps flavor -> epoch.
 
@@ -234,7 +234,14 @@ def make_flavor_images(
     each one sits on, so a flavor that changed moves while the others keep
     theirs and are not rebuilt. An unknown flavor fails later on its missing
     packagelist rather than silently inheriting someone else's epoch.
+
+    `channels` maps flavor -> package release channel for the flavors that need
+    one; anything absent builds from the default (release). It is deliberately
+    per flavor rather than per line: the channel is baked into the image, so
+    putting a flavor on a non-default channel without also moving its epoch
+    would let a rebuild change what an already-published immutable tag contains.
     """
+    channels = channels or {}
     return [
         PgEdgeImage(
             postgres_version=postgres_version,
@@ -243,7 +250,7 @@ def make_flavor_images(
             is_latest_for_pg_major=is_latest_for_pg_major,
             is_latest_for_spock_major=is_latest_for_spock_major,
             flavor=flavor,
-            package_release_channel=package_release_channel,
+            package_release_channel=channels.get(flavor, ""),
         )
         for flavor, epoch in epochs.items()
     ]
@@ -252,10 +259,11 @@ def make_flavor_images(
 # This is the list of all images that this script will build. Any new images should be
 # added to this list.
 # TEMPORARY: supautils 3.4.4, pgvector 0.8.7 and pgBackRest 2.59.3 are only in
-# the staging channel, so the spock lines build from staging until those are
-# promoted. REVERT by deleting every package_release_channel="staging" below
-# once they land in release; the images then build from release as usual.
-# The postgres base images are untouched: their packages are already in release.
+# the staging channel, so the flavors carrying them build from staging until
+# those are promoted. REVERT by deleting every channels={...} line below once
+# they land in release. Scoped to standard and coldfront on purpose: postgres
+# and minimal resolve fully on release, and putting them on staging without
+# moving their epoch would let a rebuild change an already-published tag.
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
@@ -274,8 +282,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.15",
         spock_version="5.0.12",
-        package_release_channel="staging",
         epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -283,8 +291,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.11",
         spock_version="5.0.12",
-        package_release_channel="staging",
         epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -292,8 +300,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.6",
         spock_version="5.0.12",
-        package_release_channel="staging",
         epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -301,8 +309,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        package_release_channel="staging",
         epochs={"minimal": 5, "standard": 6},
+        channels={"standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -310,8 +318,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        package_release_channel="staging",
         epochs={"minimal": 5, "standard": 6},
+        channels={"standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -319,8 +327,8 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        package_release_channel="staging",
         epochs={"minimal": 5, "standard": 6},
+        channels={"standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
