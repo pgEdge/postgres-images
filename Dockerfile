@@ -112,6 +112,7 @@ FROM ${POSTGRES_IMAGE} AS minimal
 ARG PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
+ARG PACKAGE_RELEASE_CHANNEL=""
 
 # The inherited stage ends as USER postgres.
 USER root
@@ -124,6 +125,13 @@ RUN <<EOF
 set -o errexit
 set -o pipefail
 set -o nounset
+
+# The repo config is inherited from the parent image, which may have been built
+# from a different channel, so re-point it here rather than relying on the base
+# stage. Idempotent: once rewritten there is no "release" left to match.
+if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
+    sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
+fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
@@ -146,6 +154,7 @@ FROM ${MINIMAL_IMAGE} AS standard
 ARG STANDARD_PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
+ARG PACKAGE_RELEASE_CHANNEL=""
 
 # The inherited stage ends as USER postgres.
 USER root
@@ -158,6 +167,13 @@ RUN <<EOF
 set -o errexit
 set -o pipefail
 set -o nounset
+
+# The repo config is inherited from the parent image, which may have been built
+# from a different channel, so re-point it here rather than relying on the base
+# stage. Idempotent: once rewritten there is no "release" left to match.
+if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
+    sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
+fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
@@ -243,6 +259,7 @@ FROM ${STANDARD_IMAGE} AS coldfront
 ARG COLDFRONT_PACKAGE_LIST_FILE
 ARG TARGETARCH
 ARG POSTGRES_MAJOR_VERSION
+ARG PACKAGE_RELEASE_CHANNEL=""
 
 USER root
 
@@ -254,6 +271,13 @@ RUN <<CFEOF
 set -o errexit
 set -o pipefail
 set -o nounset
+
+# The repo config is inherited from the parent image, which may have been built
+# from a different channel, so re-point it here rather than relying on the base
+# stage. Idempotent: once rewritten there is no "release" left to match.
+if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
+    sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
+fi
 
 # Dependencies are dnf's to resolve. No second "dnf update -y": that would move
 # ColdFront past its pinned NVR.
