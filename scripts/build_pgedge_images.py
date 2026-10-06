@@ -60,11 +60,6 @@ FLAVOR_LIST_ARGS = {
     "coldfront": "COLDFRONT_PACKAGE_LIST_FILE",
 }
 
-# Flavors built for every spock line. coldfront is opted in per image (its
-# protocol is validated against spock 5 only); postgres is listed once per major.
-DEFAULT_FLAVORS = ["minimal", "standard"]
-
-
 @dataclass
 class Tag:
     postgres_version: str
@@ -127,23 +122,20 @@ class PgEdgeImage:
         The per-flavor wave model builds each flavor FROM the image the previous
         wave published, so the stage is never rebuilt on a different runner.
 
-        A spock-independent parent is shared by every spock line, so it is
-        addressed by the epoch it was actually published with rather than this
-        image's own. Without that, two spock lines on different epochs would
-        each demand a base image tagged with their epoch, and only one could
-        exist. Within a line the parent shares this image's epoch.
+        The parent is addressed by the epoch it was actually published with,
+        never by this image's own. An epoch marks a change to one image, so a
+        flavor that did not change keeps its epoch while a descendant moves on;
+        deriving the parent tag from the child would demand a parent rebuild
+        that never happened. Falls back to this image's epoch when the parent
+        is not in the table.
         """
         parent = FLAVOR_PARENTS.get(self.flavor)
         if not parent:
             return ""
 
-        if parent in SPOCK_INDEPENDENT_FLAVORS:
-            spock_version = ""
-            epoch = base_image_epoch(self.postgres_version, parent)
-            if epoch is None:
-                epoch = self.epoch
-        else:
-            spock_version = self.spock_version
+        spock_version = "" if parent in SPOCK_INDEPENDENT_FLAVORS else self.spock_version
+        epoch = parent_epoch(self.postgres_version, spock_version, parent)
+        if epoch is None:
             epoch = self.epoch
 
         return str(
@@ -228,34 +220,42 @@ class PgEdgeImage:
         return [self.build_tag, *self.extra_tags]
 
 
-def make_all_flavor_images(
+def make_flavor_images(
     postgres_version: str,
     spock_version: str,
-    epoch: int,
+    epochs: dict[str, int],
     is_latest_for_pg_major: bool = False,
     is_latest_for_spock_major: bool = False,
     package_release_channel: str = "",
-    flavors: list[str] = None,
 ) -> list[PgEdgeImage]:
-    images: list[PgEdgeImage] = []
-    for flavor in flavors if flavors is not None else DEFAULT_FLAVORS:
-        images.append(
-            PgEdgeImage(
-                postgres_version=postgres_version,
-                spock_version=spock_version,
-                epoch=epoch,
-                is_latest_for_pg_major=is_latest_for_pg_major,
-                is_latest_for_spock_major=is_latest_for_spock_major,
-                flavor=flavor,
-                package_release_channel=package_release_channel,
-            )
-        )
+    """Build one image per entry in `epochs`, which maps flavor -> epoch.
 
-    return images
+    The mapping declares both which flavors this spock line has and the epoch
+    each one sits on, so a flavor that changed moves while the others keep
+    theirs and are not rebuilt. An unknown flavor fails later on its missing
+    packagelist rather than silently inheriting someone else's epoch.
+    """
+    return [
+        PgEdgeImage(
+            postgres_version=postgres_version,
+            spock_version=spock_version,
+            epoch=epoch,
+            is_latest_for_pg_major=is_latest_for_pg_major,
+            is_latest_for_spock_major=is_latest_for_spock_major,
+            flavor=flavor,
+            package_release_channel=package_release_channel,
+        )
+        for flavor, epoch in epochs.items()
+    ]
 
 
 # This is the list of all images that this script will build. Any new images should be
 # added to this list.
+# TEMPORARY: supautils 3.4.4, pgvector 0.8.7 and pgBackRest 2.59.3 are only in
+# the staging channel, so the spock lines build from staging until those are
+# promoted. REVERT by deleting every package_release_channel="staging" below
+# once they land in release; the images then build from release as usual.
+# The postgres base images are untouched: their packages are already in release.
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
@@ -271,66 +271,73 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_pg_major=True,
     ),
     # pg16 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="16.15",
         spock_version="5.0.12",
-        epoch=1,
+        package_release_channel="staging",
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg17 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="17.11",
         spock_version="5.0.12",
-        epoch=1,
+        package_release_channel="staging",
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg18 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="18.6",
         spock_version="5.0.12",
-        epoch=1,
+        package_release_channel="staging",
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg16 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        package_release_channel="staging",
+        epochs={"minimal": 5, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        package_release_channel="staging",
+        epochs={"minimal": 5, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        package_release_channel="staging",
+        epochs={"minimal": 5, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
 ]
 
 
-def base_image_epoch(postgres_version: str, flavor: str) -> int:
-    """Epoch the shared, spock-independent base image for this major is built with.
+def parent_epoch(postgres_version: str, spock_version: str, flavor: str) -> int:
+    """Epoch the image this one is chained FROM is actually built with.
 
     Returns None when no such image is defined, letting the caller fall back.
     """
     for image in all_images:
-        if image.flavor == flavor and image.postgres_version == postgres_version:
+        if (
+            image.flavor == flavor
+            and image.postgres_version == postgres_version
+            and image.spock_version == spock_version
+        ):
             return image.epoch
     return None
 

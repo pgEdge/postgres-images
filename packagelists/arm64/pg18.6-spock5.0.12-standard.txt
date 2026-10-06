@@ -1,7 +1,7 @@
 pgedge-pgaudit_18-18.0-1.el9
 pgedge-postgis36_18-3.6.4-1.el9
-pgedge-pgvector_18-0.8.5-1.el9
-pgedge-pgbackrest-2.59.0-1.el9
+pgedge-pgvector_18-0.8.7-1.el9
+pgedge-pgbackrest-2.59.3-1.el9
 pgedge-python3-psycopg2-2.9.12-1.el9
 pgedge-pgmq_18-1.13.0-1.el9
 pgedge-pg_cron_18-1.6.8-1.el9
@@ -11,5 +11,5 @@ pgedge-pg-stat-monitor_18-2.4.0-1.el9
 pgedge-vchord-bm25_18-0.2.2-1.el9
 pgedge-vectorizer_18-1.1-1.el9
 pgedge-system_stats_18-4.0-1.el9
-pgedge-supautils_18-3.2.2-1.el9
+pgedge-supautils_18-3.4.4-1.el9
 pgedge-safesession_18-1.0-1.el9
