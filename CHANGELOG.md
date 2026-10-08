@@ -5,7 +5,8 @@
 - Upgraded to PostgreSQL 16.15, 17.11, and 18.6
 - Upgraded PostGIS to 3.6.4, pgBackRest to 2.59.3, system_stats to 4.0,
   supautils to 3.4.4, and pgvector to 0.8.7 in standard images
-- Upgraded Spock to 5.0.12 in the spock 5 images
+- Upgraded Spock to 5.0.13 in the spock 5 images
+- Upgraded lolor to 1.2.3 in minimal images
 
 ## 2025-09-03
 
