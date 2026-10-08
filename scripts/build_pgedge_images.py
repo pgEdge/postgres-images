@@ -536,6 +536,20 @@ def build(
     if only_arch:
         bake_args.extend(("--set", f"default.platform=linux/{only_arch}"))
 
+    # Start FROM the parent's published image, the way the CI waves do. Left to
+    # the Dockerfile default this would be a single-graph build, and bake
+    # applies one PACKAGE_RELEASE_CHANNEL to every stage in that graph -- so a
+    # flavor on a non-default channel would rebuild its ancestors on that
+    # channel too, and publish an image the wave model never produces under the
+    # same tag. all_images is ordered base-first and each image is pushed before
+    # the next is processed, so the parent is always there by the time we
+    # reference it.
+    parent_env = {}
+    parent = image.parent_build_tag
+    parent_arg = FLAVOR_IMAGE_ARGS.get(image.flavor, "")
+    if parent and parent_arg:
+        parent_env[parent_arg] = f"{repo}:{parent}"
+
     subprocess.check_output(
         bake_cmd(*bake_args),
         env={
@@ -543,6 +557,7 @@ def build(
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
             "POSTGRES_MAJOR_VERSION": image.postgres_major,
             **image.package_list_args,
+            **parent_env,
             "TAG": f"{repo}:{image.build_tag}",
             "TARGET": image.flavor,
         },
