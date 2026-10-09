@@ -60,11 +60,6 @@ FLAVOR_LIST_ARGS = {
     "coldfront": "COLDFRONT_PACKAGE_LIST_FILE",
 }
 
-# Flavors built for every spock line. coldfront is opted in per image (its
-# protocol is validated against spock 5 only); postgres is listed once per major.
-DEFAULT_FLAVORS = ["minimal", "standard"]
-
-
 @dataclass
 class Tag:
     postgres_version: str
@@ -127,23 +122,20 @@ class PgEdgeImage:
         The per-flavor wave model builds each flavor FROM the image the previous
         wave published, so the stage is never rebuilt on a different runner.
 
-        A spock-independent parent is shared by every spock line, so it is
-        addressed by the epoch it was actually published with rather than this
-        image's own. Without that, two spock lines on different epochs would
-        each demand a base image tagged with their epoch, and only one could
-        exist. Within a line the parent shares this image's epoch.
+        The parent is addressed by the epoch it was actually published with,
+        never by this image's own. An epoch marks a change to one image, so a
+        flavor that did not change keeps its epoch while a descendant moves on;
+        deriving the parent tag from the child would demand a parent rebuild
+        that never happened. Falls back to this image's epoch when the parent
+        is not in the table.
         """
         parent = FLAVOR_PARENTS.get(self.flavor)
         if not parent:
             return ""
 
-        if parent in SPOCK_INDEPENDENT_FLAVORS:
-            spock_version = ""
-            epoch = base_image_epoch(self.postgres_version, parent)
-            if epoch is None:
-                epoch = self.epoch
-        else:
-            spock_version = self.spock_version
+        spock_version = "" if parent in SPOCK_INDEPENDENT_FLAVORS else self.spock_version
+        epoch = parent_epoch(self.postgres_version, spock_version, parent)
+        if epoch is None:
             epoch = self.epoch
 
         return str(
@@ -228,30 +220,40 @@ class PgEdgeImage:
         return [self.build_tag, *self.extra_tags]
 
 
-def make_all_flavor_images(
+def make_flavor_images(
     postgres_version: str,
     spock_version: str,
-    epoch: int,
+    epochs: dict[str, int],
     is_latest_for_pg_major: bool = False,
     is_latest_for_spock_major: bool = False,
-    package_release_channel: str = "",
-    flavors: list[str] = None,
+    channels: dict[str, str] = None,
 ) -> list[PgEdgeImage]:
-    images: list[PgEdgeImage] = []
-    for flavor in flavors if flavors is not None else DEFAULT_FLAVORS:
-        images.append(
-            PgEdgeImage(
-                postgres_version=postgres_version,
-                spock_version=spock_version,
-                epoch=epoch,
-                is_latest_for_pg_major=is_latest_for_pg_major,
-                is_latest_for_spock_major=is_latest_for_spock_major,
-                flavor=flavor,
-                package_release_channel=package_release_channel,
-            )
-        )
+    """Build one image per entry in `epochs`, which maps flavor -> epoch.
 
-    return images
+    The mapping declares both which flavors this spock line has and the epoch
+    each one sits on, so a flavor that changed moves while the others keep
+    theirs and are not rebuilt. An unknown flavor fails later on its missing
+    packagelist rather than silently inheriting someone else's epoch.
+
+    `channels` maps flavor -> package release channel for the flavors that need
+    one; anything absent builds from the default (release). It is deliberately
+    per flavor rather than per line: the channel is baked into the image, so
+    putting a flavor on a non-default channel without also moving its epoch
+    would let a rebuild change what an already-published immutable tag contains.
+    """
+    channels = channels or {}
+    return [
+        PgEdgeImage(
+            postgres_version=postgres_version,
+            spock_version=spock_version,
+            epoch=epoch,
+            is_latest_for_pg_major=is_latest_for_pg_major,
+            is_latest_for_spock_major=is_latest_for_spock_major,
+            flavor=flavor,
+            package_release_channel=channels.get(flavor, ""),
+        )
+        for flavor, epoch in epochs.items()
+    ]
 
 
 # This is the list of all images that this script will build. Any new images should be
@@ -271,66 +273,67 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_pg_major=True,
     ),
     # pg16 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="16.15",
-        spock_version="5.0.12",
-        epoch=1,
+        spock_version="5.0.13",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg17 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="17.11",
-        spock_version="5.0.12",
-        epoch=1,
+        spock_version="5.0.13",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg18 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="18.6",
-        spock_version="5.0.12",
-        epoch=1,
+        spock_version="5.0.13",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
-        flavors=DEFAULT_FLAVORS + ["coldfront"],
     ),
     # pg16 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        epochs={"minimal": 6, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        epochs={"minimal": 6, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
-    *make_all_flavor_images(
+    *make_flavor_images(
         postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        epoch=5,
+        epochs={"minimal": 6, "standard": 6},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
 ]
 
 
-def base_image_epoch(postgres_version: str, flavor: str) -> int:
-    """Epoch the shared, spock-independent base image for this major is built with.
+def parent_epoch(postgres_version: str, spock_version: str, flavor: str) -> int:
+    """Epoch the image this one is chained FROM is actually built with.
 
     Returns None when no such image is defined, letting the caller fall back.
     """
     for image in all_images:
-        if image.flavor == flavor and image.postgres_version == postgres_version:
+        if (
+            image.flavor == flavor
+            and image.postgres_version == postgres_version
+            and image.spock_version == spock_version
+        ):
             return image.epoch
     return None
 
@@ -504,6 +507,20 @@ def build(
     if only_arch:
         bake_args.extend(("--set", f"default.platform=linux/{only_arch}"))
 
+    # Start FROM the parent's published image, the way the CI waves do. Left to
+    # the Dockerfile default this would be a single-graph build, and bake
+    # applies one PACKAGE_RELEASE_CHANNEL to every stage in that graph -- so a
+    # flavor on a non-default channel would rebuild its ancestors on that
+    # channel too, and publish an image the wave model never produces under the
+    # same tag. all_images is ordered base-first and each image is pushed before
+    # the next is processed, so the parent is always there by the time we
+    # reference it.
+    parent_env = {}
+    parent = image.parent_build_tag
+    parent_arg = FLAVOR_IMAGE_ARGS.get(image.flavor, "")
+    if parent and parent_arg:
+        parent_env[parent_arg] = f"{repo}:{parent}"
+
     subprocess.check_output(
         bake_cmd(*bake_args),
         env={
@@ -511,6 +528,7 @@ def build(
             "PACKAGE_RELEASE_CHANNEL": image.package_release_channel,
             "POSTGRES_MAJOR_VERSION": image.postgres_major,
             **image.package_list_args,
+            **parent_env,
             "TAG": f"{repo}:{image.build_tag}",
             "TARGET": image.flavor,
         },
