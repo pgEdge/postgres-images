@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +32,10 @@ type Test struct {
 	MinimalOnly    bool // Only run on minimal-or-later (needs the pgEdge extensions)
 	StandardOnly   bool // Only run on standard-or-later flavors (standard, coldfront)
 	ColdfrontOnly  bool // Only run on the coldfront flavor
+
+	// TEMPORARY: see hasTokenizerBM25. Remove this field, every use of it, and
+	// the tests it guards once PG 19 has pg_tokenizer and vchord_bm25 builds.
+	TokenizerBM25Only bool
 }
 
 // includesMinimal reports whether a flavor ships the pgEdge extensions minimal
@@ -62,6 +68,11 @@ type DefaultEntrypointRunner struct {
 
 func main() {
 	image, flavor := parseFlags()
+
+	// TEMPORARY: see hasTokenizerBM25.
+	if major := pgMajorFromImage(image); major >= 19 {
+		hasTokenizerBM25 = false
+	}
 
 	// Derive the expected spock major version from the image tag (e.g.
 	// "...-spock6.0.0-beta1-standard" -> "6"). Used to assert that the image
@@ -111,6 +122,38 @@ func spockMajorFromImage(image string) string {
 		major.WriteRune(c)
 	}
 	return major.String()
+}
+
+// TEMPORARY: pg_tokenizer and vchord_bm25 have no PG 19 build, so the PG 19
+// packagelists omit them. Tests that need either are skipped there, and
+// pg_tokenizer is left out of shared_preload_libraries. Delete this, the
+// Test.TokenizerBM25Only field and the tests it guards once both ship for
+// PG 19; the suite is then the same on every major again.
+var hasTokenizerBM25 = true
+
+// pgMajorFromImage extracts the PostgreSQL major from an image reference's tag,
+// e.g. "...:18.6-spock5.0.13-standard-1" yields 18 and "...:19-spock5-minimal"
+// yields 19. It returns 0 when the tag does not start with a number, in which
+// case the caller keeps the default and skips nothing.
+func pgMajorFromImage(image string) int {
+	tag := image
+	if idx := strings.LastIndex(image, ":"); idx != -1 {
+		tag = image[idx+1:]
+	}
+
+	var digits strings.Builder
+	for _, c := range tag {
+		if c < '0' || c > '9' {
+			break
+		}
+		digits.WriteRune(c)
+	}
+
+	major, err := strconv.Atoi(digits.String())
+	if err != nil {
+		return 0
+	}
+	return major
 }
 
 func parseFlags() (string, string) {
@@ -233,6 +276,9 @@ func printSummary(errorCount int, flavor, spockMajor string) {
 			continue
 		}
 		if t.ColdfrontOnly && flavor != "coldfront" {
+			continue
+		}
+		if t.TokenizerBM25Only && !hasTokenizerBM25 {
 			continue
 		}
 		extensionTests++
@@ -535,7 +581,12 @@ func (r *TestRunner) Start() error {
 		sharedLibs = "spock,snowflake"
 	}
 	if includesStandard(r.flavor) {
-		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron,pg_tokenizer"
+		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron"
+		// TEMPORARY: see hasTokenizerBM25. Preloading an extension the image
+		// does not ship stops the postmaster from starting at all.
+		if hasTokenizerBM25 {
+			sharedLibs += ",pg_tokenizer"
+		}
 	}
 	// pg_duckdb and coldfront install hooks at postmaster start. The image's own
 	// entrypoint already passes them, but the -c built below is appended after it
@@ -782,6 +833,9 @@ func (r *TestRunner) RunTests(tests []Test) int {
 			continue
 		}
 		if test.ColdfrontOnly && r.flavor != "coldfront" {
+			continue
+		}
+		if test.TokenizerBM25Only && !hasTokenizerBM25 {
 			continue
 		}
 
@@ -1183,6 +1237,22 @@ func expectFailureContaining(want string) func(exitCode int, output string) erro
 // extension's after-create.sql granting the database's own owner exactly
 // the access it documents, in whichever schema the extension actually
 // landed in, not a hardcoded one.
+// privilegedExtensions is the supautils.privileged_extensions list the gate
+// tests set. TEMPORARY: see hasTokenizerBM25 -- the two entries are dropped on
+// a major that has no build for them, so supautils does not gate an extension
+// that cannot be installed.
+func privilegedExtensions() string {
+	extensions := []string{
+		"address_standardizer", "address_standardizer_data_us", "pg_cron",
+		"postgis", "postgis_tiger_geocoder", "postgis_topology",
+	}
+	if hasTokenizerBM25 {
+		extensions = append(extensions, "pg_tokenizer", "vchord_bm25")
+	}
+	sort.Strings(extensions)
+	return strings.Join(extensions, ", ")
+}
+
 func getExtensionCustomScriptsTests() []Test {
 	return []Test{
 		{
@@ -1214,7 +1284,7 @@ func getExtensionCustomScriptsTests() []Test {
 		{
 			Name:           "configure supautils.privileged_extensions",
 			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = 'address_standardizer, address_standardizer_data_us, pg_cron, pg_tokenizer, vchord_bm25, postgis, postgis_tiger_geocoder, postgis_topology';\"",
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"ALTER SYSTEM SET supautils.privileged_extensions = '" + privilegedExtensions() + "';\"",
 			ExpectedOutput: expectSuccess,
 		},
 		{
@@ -1380,20 +1450,22 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectFailureContaining("permission denied for table job"),
 		},
 		{
-			Name:           "gate installs pg_tokenizer",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_tokenizer;\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "gate installs pg_tokenizer",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION pg_tokenizer;\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// Real query against a real table in tokenizer_catalog, the
 			// same reasoning as address_standardizer_data_us above: a
 			// table grant with no matching schema USAGE fails here even
 			// though has_table_privilege would report true.
-			Name:           "pg_tokenizer after-create.sql granted access to tokenizer_catalog",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql granted access to tokenizer_catalog",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// The configuration functions run as the caller and write the
@@ -1403,60 +1475,68 @@ func getExtensionCustomScriptsTests() []Test {
 			// the owner INSERT, UPDATE, and DELETE on those tables. The
 			// tokenizer is left in place for the third-party role's
 			// tokenize() case below, and dropped after it.
-			Name:           "pg_tokenizer after-create.sql lets the owner create a text analyzer",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_text_analyzer('probe_analyzer', $$ pre_tokenizer = 'unicode_segmentation' $$);\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner create a text analyzer",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_text_analyzer('probe_analyzer', $$ pre_tokenizer = 'unicode_segmentation' $$);\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "pg_tokenizer after-create.sql lets the owner create a tokenizer",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_tokenizer', $$ model = 'bert_base_uncased' $$);\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner create a tokenizer",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_tokenizer', $$ model = 'bert_base_uncased' $$);\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "pg_tokenizer after-create.sql lets the owner create a stopword list",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_stopwords('probe_stopwords', E'it\\nis\\na');\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner create a stopword list",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_stopwords('probe_stopwords', E'it\\nis\\na');\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "pg_tokenizer after-create.sql lets the owner create a synonym list",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_synonym('probe_synonyms', 'pgsql postgres postgresql');\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner create a synonym list",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_synonym('probe_synonyms', 'pgsql postgres postgresql');\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// A superuser adding a table to tokenizer_catalog after
 			// install, as an extension upgrade would: the default
 			// privileges after-create.sql sets give the owner write
 			// access to it without the script being run again.
-			Name:           "pg_tokenizer after-create.sql default privileges cover a table added later",
-			StandardOnly:   true,
-			Cmd:            "psql -U postgres -d testdb -t -A -c \"CREATE TABLE tokenizer_catalog.probe_added_later(id int);\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql default privileges cover a table added later",
+			StandardOnly:      true,
+			Cmd:               "psql -U postgres -d testdb -t -A -c \"CREATE TABLE tokenizer_catalog.probe_added_later(id int);\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "pg_tokenizer after-create.sql lets the owner write a table added later",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.probe_added_later VALUES (1); UPDATE tokenizer_catalog.probe_added_later SET id = 2; DELETE FROM tokenizer_catalog.probe_added_later;\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner write a table added later",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.probe_added_later VALUES (1); UPDATE tokenizer_catalog.probe_added_later SET id = 2; DELETE FROM tokenizer_catalog.probe_added_later;\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "gate installs vchord_bm25",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION vchord_bm25;\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "gate installs vchord_bm25",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"CREATE EXTENSION vchord_bm25;\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// bm25_catalog holds only the bm25vector type and its support
 			// functions, no tables: declaring a column of that type is
 			// the real thing the database's owner needs USAGE on the
 			// schema for.
-			Name:           "vchord_bm25 after-create.sql granted access to bm25_catalog",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE bm25_probe(id int, v bm25_catalog.bm25vector);\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "vchord_bm25 after-create.sql granted access to bm25_catalog",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"CREATE TABLE bm25_probe(id int, v bm25_catalog.bm25vector);\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// The earlier, unrelated common extension test already
@@ -1616,18 +1696,20 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name:           "third-party role reaches vchord_bm25/pg_tokenizer via PUBLIC",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT pg_typeof('{1:1}'::bm25_catalog.bm25vector); SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "third-party role reaches vchord_bm25/pg_tokenizer via PUBLIC",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"SELECT pg_typeof('{1:1}'::bm25_catalog.bm25vector); SELECT count(*) FROM tokenizer_catalog.tokenizer;\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// The write side stays pg_database_owner-only regardless
 			// of the PUBLIC read grant above.
-			Name:           "third-party role still refused a tokenizer_catalog write",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.tokenizer(name) VALUES ('probe');\"",
-			ExpectedOutput: expectFailureContaining("permission denied for table tokenizer"),
+			Name:              "third-party role still refused a tokenizer_catalog write",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"INSERT INTO tokenizer_catalog.tokenizer(name) VALUES ('probe');\"",
+			ExpectedOutput:    expectFailureContaining("permission denied for table tokenizer"),
+			TokenizerBM25Only: true,
 		},
 		{
 			// Schema USAGE makes every function in tokenizer_catalog
@@ -1638,19 +1720,21 @@ func getExtensionCustomScriptsTests() []Test {
 			// them SECURITY DEFINER, but still real work running before
 			// any table-ACL check fires. Confirmed cleanly refused at
 			// the function call itself now, not at some later step.
-			Name:           "third-party role refused the tokenizer_catalog config-management functions",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe', 'x');\"",
-			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
+			Name:              "third-party role refused the tokenizer_catalog config-management functions",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe', 'x');\"",
+			ExpectedOutput:    expectFailureContaining("permission denied for function create_tokenizer"),
+			TokenizerBM25Only: true,
 		},
 		{
 			// A model function parses its configuration and loads a model
 			// before it writes anything, so refusing it at EXECUTE, not at
 			// the table write, is what keeps that work from running.
-			Name:           "third-party role refused the tokenizer_catalog model functions",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_huggingface_model('probe', 'x');\"",
-			ExpectedOutput: expectFailureContaining("permission denied for function create_huggingface_model"),
+			Name:              "third-party role refused the tokenizer_catalog model functions",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_huggingface_model('probe', 'x');\"",
+			ExpectedOutput:    expectFailureContaining("permission denied for function create_huggingface_model"),
+			TokenizerBM25Only: true,
 		},
 		{
 			// The three functions the read-only use case actually
@@ -1658,19 +1742,21 @@ func getExtensionCustomScriptsTests() []Test {
 			// apply_text_analyzer() to process text against an
 			// existing configuration, list_preload_models() to see
 			// what's available.
-			Name:           "third-party role keeps the read-only tokenizer_catalog functions",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.list_preload_models();\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "third-party role keeps the read-only tokenizer_catalog functions",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.list_preload_models();\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// Against the tokenizer and text analyzer the owner created
 			// above: the configuration the owner manages is usable by
 			// every role, not only readable.
-			Name:           "third-party role uses the owner's tokenizer and text analyzer",
-			StandardOnly:   true,
-			Cmd:            "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.tokenize('PostgreSQL is great', 'probe_tokenizer'); SELECT tokenizer_catalog.apply_text_analyzer('PostgreSQL is great', 'probe_analyzer');\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "third-party role uses the owner's tokenizer and text analyzer",
+			StandardOnly:      true,
+			Cmd:               "psql -U reporting_role -d testdb -t -A -c \"SELECT tokenizer_catalog.tokenize('PostgreSQL is great', 'probe_tokenizer'); SELECT tokenizer_catalog.apply_text_analyzer('PostgreSQL is great', 'probe_analyzer');\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// pg_cron is deliberately not part of this fix: cron.job is
@@ -1685,10 +1771,11 @@ func getExtensionCustomScriptsTests() []Test {
 		{
 			// Dropped only now, after the third-party role's tokenize()
 			// case above has used them.
-			Name:           "pg_tokenizer after-create.sql lets the owner drop what it created",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.drop_synonym('probe_synonyms'); SELECT tokenizer_catalog.drop_stopwords('probe_stopwords'); SELECT tokenizer_catalog.drop_tokenizer('probe_tokenizer'); SELECT tokenizer_catalog.drop_text_analyzer('probe_analyzer');\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "pg_tokenizer after-create.sql lets the owner drop what it created",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.drop_synonym('probe_synonyms'); SELECT tokenizer_catalog.drop_stopwords('probe_stopwords'); SELECT tokenizer_catalog.drop_tokenizer('probe_tokenizer'); SELECT tokenizer_catalog.drop_text_analyzer('probe_analyzer');\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
 			// The reason every script grants to pg_database_owner rather
@@ -1702,16 +1789,18 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput: expectSuccess,
 		},
 		{
-			Name:           "new owner inherits the grants after-create.sql gave pg_database_owner",
-			StandardOnly:   true,
-			Cmd:            "psql -U new_owner_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$); SELECT tokenizer_catalog.drop_tokenizer('probe_reassigned');\"",
-			ExpectedOutput: expectSuccess,
+			Name:              "new owner inherits the grants after-create.sql gave pg_database_owner",
+			StandardOnly:      true,
+			Cmd:               "psql -U new_owner_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$); SELECT tokenizer_catalog.drop_tokenizer('probe_reassigned');\"",
+			ExpectedOutput:    expectSuccess,
+			TokenizerBM25Only: true,
 		},
 		{
-			Name:           "former owner loses the grants after-create.sql gave pg_database_owner",
-			StandardOnly:   true,
-			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$);\"",
-			ExpectedOutput: expectFailureContaining("permission denied for function create_tokenizer"),
+			Name:              "former owner loses the grants after-create.sql gave pg_database_owner",
+			StandardOnly:      true,
+			Cmd:               "psql -U gate_test_role -d testdb -t -A -c \"SELECT tokenizer_catalog.create_tokenizer('probe_reassigned', $$ model = 'bert_base_uncased' $$);\"",
+			ExpectedOutput:    expectFailureContaining("permission denied for function create_tokenizer"),
+			TokenizerBM25Only: true,
 		},
 	}
 }
