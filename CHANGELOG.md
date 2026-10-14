@@ -1,5 +1,12 @@
 # pgEdge Postgres Image Changelog
 
+## Unreleased
+
+- Added PostgreSQL 19 (rc1) postgres, minimal and standard images for spock 5.
+  They omit pg_tokenizer and vchord_bm25, which have no PG 19 build yet; the
+  tests covering those extensions are skipped on PG 19 until they ship. No
+  coldfront or spock 6 images for PG 19 yet.
+
 ## 2026-11-10
 
 - Upgraded to PostgreSQL 16.16, 17.12, and 18.7
