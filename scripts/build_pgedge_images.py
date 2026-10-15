@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 
 from dataclasses import dataclass
@@ -94,7 +95,9 @@ class PgEdgeImage:
 
     @property
     def postgres_major(self) -> str:
-        return self.postgres_version.split(".")[0]
+        # Leading digits, so a pre-release version like "19-rc1" still yields
+        # the major the packages and paths use.
+        return re.match(r"\d+", self.postgres_version).group()
 
     @property
     def spock_major(self) -> str:
@@ -272,6 +275,10 @@ all_images: list[PgEdgeImage] = [
         postgres_version="18.6", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
+    PgEdgeImage(
+        postgres_version="19-rc1", spock_version="", epoch=1, flavor="postgres",
+        is_latest_for_pg_major=True, package_release_channel="staging",
+    ),
     # pg16 images
     *make_flavor_images(
         postgres_version="16.15",
@@ -293,6 +300,15 @@ all_images: list[PgEdgeImage] = [
         postgres_version="18.6",
         spock_version="5.0.13",
         epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        is_latest_for_pg_major=True,
+        is_latest_for_spock_major=True,
+    ),
+    # pg19 images. No coldfront or spock 6 line yet: neither has a PG 19 build.
+    *make_flavor_images(
+        postgres_version="19-rc1",
+        spock_version="5.0.13",
+        epochs={"minimal": 1, "standard": 1},
+        channels={"minimal": "staging", "standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
