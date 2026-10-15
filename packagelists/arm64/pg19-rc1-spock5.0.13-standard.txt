@@ -9,5 +9,4 @@ pgedge-pg-vectorize_19-0.27.1-1.el9
 pgedge-pg-stat-monitor_19-2.4.0-1.el9
 pgedge-vectorizer_19-1.1-1.el9
 pgedge-system_stats_19-4.1-1.el9
-pgedge-supautils_19-3.2.2-1.el9
 pgedge-safesession_19-1.0-1.el9
