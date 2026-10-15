@@ -276,7 +276,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.15",
         spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -284,7 +284,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.11",
         spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -292,7 +292,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.6",
         spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -300,7 +300,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.15",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 6},
+        epochs={"minimal": 6, "standard": 7},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -308,7 +308,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.11",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 6},
+        epochs={"minimal": 6, "standard": 7},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -316,7 +316,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.6",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 6},
+        epochs={"minimal": 6, "standard": 7},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),

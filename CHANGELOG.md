@@ -7,6 +7,7 @@
   supautils to 3.4.4, and pgvector to 0.8.7 in standard images
 - Upgraded Spock to 5.0.13 in the spock 5 images
 - Upgraded lolor to 1.2.3 in minimal images
+- Upgraded system_stats to 4.1 in standard images
 
 ## 2025-09-03
 
