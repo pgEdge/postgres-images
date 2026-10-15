@@ -72,6 +72,7 @@ func main() {
 	// TEMPORARY: see hasTokenizerBM25.
 	if major := pgMajorFromImage(image); major >= 19 {
 		hasTokenizerBM25 = false
+		hasSupautils = false
 	}
 
 	// Derive the expected spock major version from the image tag (e.g.
@@ -131,6 +132,14 @@ func spockMajorFromImage(image string) string {
 // PG 19; the suite is then the same on every major again.
 var hasTokenizerBM25 = true
 
+// TEMPORARY: supautils 3.2.2 is the only PG 19 build and it aborts the
+// postmaster there -- it registers supautils.privileged_extensions_superuser
+// with a NULL boot_val, tripping the check_GUC_init assertion PG 19 added. The
+// PG 19 standard packagelist therefore omits supautils, so it is left out of
+// shared_preload_libraries and its tests are skipped. Delete this once a PG 19
+// build of supautils >= 3.4.4 ships.
+var hasSupautils = true
+
 // pgMajorFromImage extracts the PostgreSQL major from an image reference's tag,
 // e.g. "...:18.6-spock5.0.13-standard-1" yields 18 and "...:19-spock5-minimal"
 // yields 19. It returns 0 when the tag does not start with a number, in which
@@ -172,6 +181,21 @@ func parseFlags() (string, string) {
 
 	if *flavor != "postgres" && !includesMinimal(*flavor) {
 		log.Fatalf("Invalid flavor '%s'. Must be 'postgres', 'minimal', 'standard' or 'coldfront'", *flavor)
+	}
+
+	// The PostgreSQL major decides which extensions the image is expected to
+	// ship, and that in turn decides shared_preload_libraries. Getting it wrong
+	// does not merely skip an assertion: preloading a module the image does not
+	// have stops the postmaster, so a reference we cannot read a major from is
+	// refused here rather than misconfiguring the container. A digest-only
+	// reference is the common case -- "@sha256:..." puts hex where the tag
+	// belongs. CI retags by digest before calling this, so it passes a tag.
+	if strings.Contains(*image, "@") {
+		log.Fatalf("Image %q is a digest reference; pass a tagged one, e.g. %s:19-rc1-spock5.0.13-standard-1",
+			*image, strings.SplitN(*image, "@", 2)[0])
+	}
+	if pgMajorFromImage(*image) == 0 {
+		log.Fatalf("Cannot read a PostgreSQL major from image %q. The tag has to start with it, e.g. 18.6-... or 19-rc1-...", *image)
 	}
 
 	return *image, *flavor
@@ -265,6 +289,32 @@ func printPhaseHeader(title string) {
 	fmt.Println()
 }
 
+// skippedSuites describes the tests withheld on this image and why. A gate that
+// silently skips is a gate nobody notices has outlived its cause, so the counts
+// are printed on every run.
+func skippedSuites(flavor string) []string {
+	if !includesStandard(flavor) {
+		return nil
+	}
+
+	var out []string
+	if !hasSupautils {
+		// The whole gate suite goes with it: those tests run through supautils'
+		// extension gate, so they cannot run without it.
+		n := len(getSupautilsTests()) + len(getExtensionCustomScriptsTests())
+		out = append(out, fmt.Sprintf("%d skipped: image ships no supautils (see hasSupautils)", n))
+	} else if !hasTokenizerBM25 {
+		n := 0
+		for _, t := range getExtensionCustomScriptsTests() {
+			if t.TokenizerBM25Only {
+				n++
+			}
+		}
+		out = append(out, fmt.Sprintf("%d skipped: image ships no pg_tokenizer/vchord_bm25 (see hasTokenizerBM25)", n))
+	}
+	return out
+}
+
 func printSummary(errorCount int, flavor, spockMajor string) {
 	tests := buildTestSuite(spockMajor)
 	extensionTests := 0
@@ -295,6 +345,9 @@ func printSummary(errorCount int, flavor, spockMajor string) {
 	fmt.Println()
 	fmt.Println("Test Summary")
 	fmt.Printf("  Tests Executed: %d\n", testsRun)
+	for _, line := range skippedSuites(flavor) {
+		fmt.Printf("  %s\n", line)
+	}
 	fmt.Printf("  Errors:         %d\n", errorCount)
 	if errorCount == 0 {
 		fmt.Printf("  Status:         ✅ ALL TESTS PASSED\n")
@@ -582,6 +635,11 @@ func (r *TestRunner) Start() error {
 	}
 	if includesStandard(r.flavor) {
 		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron"
+		// TEMPORARY: see hasSupautils. Preloading a module the image does not
+		// ship stops the postmaster from starting at all.
+		if !hasSupautils {
+			sharedLibs = "spock,snowflake,pgaudit,pg_cron"
+		}
 		// TEMPORARY: see hasTokenizerBM25. Preloading an extension the image
 		// does not ship stops the postmaster from starting at all.
 		if hasTokenizerBM25 {
@@ -1078,6 +1136,11 @@ func getColdfrontTests() []Test {
 
 func getStandardOnlyTests() []Test {
 	tests := append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
+	// TEMPORARY: see hasSupautils. Both suites need supautils loaded -- the
+	// custom-scripts ones run entirely through its extension gate.
+	if !hasSupautils {
+		return tests
+	}
 	tests = append(tests, getSupautilsTests()...)
 	return append(tests, getExtensionCustomScriptsTests()...)
 }
