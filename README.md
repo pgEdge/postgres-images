@@ -125,7 +125,7 @@ This repository includes a comprehensive test suite to validate Postgres images.
 ### Running Tests Locally
 
 To run tests locally, you'll need:
-- Go 1.24.11 or later
+- Go 1.26.10 or later
 - Docker installed and running
 - Access to pull the image you want to test
 
