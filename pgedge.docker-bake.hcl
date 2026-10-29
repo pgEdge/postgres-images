@@ -63,6 +63,16 @@ variable "TAG" {
   default = "pgedge"
 }
 
+variable "REPO_CLIENT_CRT" {
+  type    = string
+  default = "client.crt"
+}
+
+variable "REPO_CLIENT_KEY" {
+  type    = string
+  default = "client.key"
+}
+
 target "default" {
   pull = true
   target = TARGET
@@ -78,6 +88,14 @@ target "default" {
     STANDARD_IMAGE              = STANDARD_IMAGE
     POSTGRES_MAJOR_VERSION      = POSTGRES_MAJOR_VERSION
   }
+  // The pgEdge repositories authenticate clients with mutual TLS. BuildKit
+  // mounts these for the RUNs that install packages and never writes them to
+  // a layer. Point them at your own files with REPO_CLIENT_CRT and
+  // REPO_CLIENT_KEY.
+  secret = [
+    "id=repo_client_crt,src=${REPO_CLIENT_CRT}",
+    "id=repo_client_key,src=${REPO_CLIENT_KEY}",
+  ]
   platforms = [
     "linux/amd64",
     "linux/arm64",

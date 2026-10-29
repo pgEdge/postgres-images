@@ -132,6 +132,8 @@ jobs:
           cell: ${{ toJSON(matrix.cell) }}
           repo: ${{ inputs.pgedge_image_repo }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_client_crt: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          repo_client_key: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
           dry_run: ${{ inputs.pgedge_image_dry_run }}
           no_cache: ${{ inputs.pgedge_image_no_cache }}
 
@@ -190,6 +192,8 @@ jobs:
           cell: ${{ toJSON(matrix.cell) }}
           repo: ${{ inputs.pgedge_image_repo }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_client_crt: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          repo_client_key: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
           dry_run: ${{ inputs.pgedge_image_dry_run }}
           no_cache: ${{ inputs.pgedge_image_no_cache }}
 
@@ -246,6 +250,8 @@ jobs:
           cell: ${{ toJSON(matrix.cell) }}
           repo: ${{ inputs.pgedge_image_repo }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_client_crt: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          repo_client_key: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
           dry_run: ${{ inputs.pgedge_image_dry_run }}
           no_cache: ${{ inputs.pgedge_image_no_cache }}
 
@@ -307,6 +313,8 @@ jobs:
           cell: ${{ toJSON(matrix.cell) }}
           repo: ${{ inputs.pgedge_image_repo }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_client_crt: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          repo_client_key: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
           dry_run: ${{ inputs.pgedge_image_dry_run }}
           no_cache: ${{ inputs.pgedge_image_no_cache }}
 
