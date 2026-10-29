@@ -28,7 +28,9 @@ useradd -u ${POSTGRES_USER_ID} -m postgres -s /bin/bash
 dnf install -y epel-release dnf
 dnf config-manager --set-enabled crb
 dnf update -y --allowerasing
-dnf install -y https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+# downloads.pgedge.com, not dnf.pgedge.com: the gated repository cannot serve
+# the package that configures access to it.
+dnf install -y https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
 if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
@@ -51,12 +53,22 @@ ARG POSTGRES_MAJOR_VERSION
 
 COPY packagelists/${TARGETARCH}/${POSTGRES_PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
-RUN <<EOF
+RUN --mount=type=secret,id=repo_client_crt \
+    --mount=type=secret,id=repo_client_key \
+    <<EOF
 #!/usr/bin/env bash
 
 set -o errexit
 set -o pipefail
 set -o nounset
+
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
+# mounts the secrets for this RUN alone and never writes them to a layer; the
+# copies pgedge-subscription-manager installs are removed, and the
+# repositories disabled again, before this layer is committed. So the image
+# carries no credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 # Patch any OS packages (including transitive dependencies pulled in above)
@@ -119,7 +131,9 @@ USER root
 
 COPY packagelists/${TARGETARCH}/${PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
-RUN <<EOF
+RUN --mount=type=secret,id=repo_client_crt \
+    --mount=type=secret,id=repo_client_key \
+    <<EOF
 #!/usr/bin/env bash
 
 set -o errexit
@@ -135,6 +149,14 @@ fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
+# mounts the secrets for this RUN alone and never writes them to a layer; the
+# copies pgedge-subscription-manager installs are removed, and the
+# repositories disabled again, before this layer is committed. So the image
+# carries no credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
+
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 dnf update -y
 dnf clean all
@@ -161,7 +183,9 @@ USER root
 
 COPY packagelists/${TARGETARCH}/${STANDARD_PACKAGE_LIST_FILE} /usr/share/pgedge/packages.txt
 
-RUN <<EOF
+RUN --mount=type=secret,id=repo_client_crt \
+    --mount=type=secret,id=repo_client_key \
+    <<EOF
 #!/usr/bin/env bash
 
 set -o errexit
@@ -177,6 +201,14 @@ fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
+# mounts the secrets for this RUN alone and never writes them to a layer; the
+# copies pgedge-subscription-manager installs are removed, and the
+# repositories disabled again, before this layer is committed. So the image
+# carries no credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
+
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
@@ -265,7 +297,9 @@ USER root
 
 COPY packagelists/${TARGETARCH}/${COLDFRONT_PACKAGE_LIST_FILE} /usr/share/pgedge/coldfront-packages.txt
 
-RUN <<CFEOF
+RUN --mount=type=secret,id=repo_client_crt \
+    --mount=type=secret,id=repo_client_key \
+    <<CFEOF
 #!/usr/bin/env bash
 
 set -o errexit
@@ -281,6 +315,14 @@ fi
 
 # Dependencies are dnf's to resolve. No second "dnf update -y": that would move
 # ColdFront past its pinned NVR.
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
+# mounts the secrets for this RUN alone and never writes them to a layer; the
+# copies pgedge-subscription-manager installs are removed, and the
+# repositories disabled again, before this layer is committed. So the image
+# carries no credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
+
 xargs dnf install -y --setopt=install_weak_deps=False < /usr/share/pgedge/coldfront-packages.txt
 dnf clean all
 
