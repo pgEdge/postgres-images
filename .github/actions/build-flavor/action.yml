@@ -102,6 +102,9 @@ runs:
 
         args=(
           --file pgedge.docker-bake.hcl
+          # The certificate lives in RUNNER_TEMP, outside the bake file's
+          # directory, so bake needs the entitlement to read it.
+          --allow "fs.read=${RUNNER_TEMP}"
           --set "default.platform=linux/${arch}"
           --set "default.tags="
           --metadata-file metadata.json

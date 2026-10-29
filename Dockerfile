@@ -62,12 +62,24 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
-# mounts the secrets for this RUN alone and never writes them to a layer; the
-# copies pgedge-subscription-manager installs are removed, and the
-# repositories disabled again, before this layer is committed. So the image
-# carries no credentials and no repository it cannot reach.
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit mounts
+# the secrets for this RUN alone and never writes them to a layer; the copies
+# pgedge-subscription-manager installs are removed, and the repositories
+# disabled again, before this layer is committed. So the image carries no
+# credentials and no repository it cannot reach.
 trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+
+# A chained stage starts FROM a published parent built before the repositories
+# were gated: its pgedge-release predates pgedge-subscription-manager and its
+# repository definition is enabled, pointing at a host it can no longer reach.
+# Disable those definitions and replace the package first, so neither this
+# install nor the channel rewrite below depends on when the parent was built.
+dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true
+command -v pgedge-subscription-manager >/dev/null 2>&1 \
+    || dnf install -y --disablerepo="pgedge*" \
+       https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+
+
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
@@ -140,6 +152,24 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit mounts
+# the secrets for this RUN alone and never writes them to a layer; the copies
+# pgedge-subscription-manager installs are removed, and the repositories
+# disabled again, before this layer is committed. So the image carries no
+# credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+
+# A chained stage starts FROM a published parent built before the repositories
+# were gated: its pgedge-release predates pgedge-subscription-manager and its
+# repository definition is enabled, pointing at a host it can no longer reach.
+# Disable those definitions and replace the package first, so neither this
+# install nor the channel rewrite below depends on when the parent was built.
+dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true
+command -v pgedge-subscription-manager >/dev/null 2>&1 \
+    || dnf install -y --disablerepo="pgedge*" \
+       https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+
+
 # The repo config is inherited from the parent image, which may have been built
 # from a different channel, so re-point it here rather than relying on the base
 # stage. Idempotent: once rewritten there is no "release" left to match.
@@ -149,12 +179,6 @@ fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
-# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
-# mounts the secrets for this RUN alone and never writes them to a layer; the
-# copies pgedge-subscription-manager installs are removed, and the
-# repositories disabled again, before this layer is committed. So the image
-# carries no credentials and no repository it cannot reach.
-trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
@@ -192,6 +216,24 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit mounts
+# the secrets for this RUN alone and never writes them to a layer; the copies
+# pgedge-subscription-manager installs are removed, and the repositories
+# disabled again, before this layer is committed. So the image carries no
+# credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+
+# A chained stage starts FROM a published parent built before the repositories
+# were gated: its pgedge-release predates pgedge-subscription-manager and its
+# repository definition is enabled, pointing at a host it can no longer reach.
+# Disable those definitions and replace the package first, so neither this
+# install nor the channel rewrite below depends on when the parent was built.
+dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true
+command -v pgedge-subscription-manager >/dev/null 2>&1 \
+    || dnf install -y --disablerepo="pgedge*" \
+       https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+
+
 # The repo config is inherited from the parent image, which may have been built
 # from a different channel, so re-point it here rather than relying on the base
 # stage. Idempotent: once rewritten there is no "release" left to match.
@@ -201,12 +243,6 @@ fi
 
 # A delta: re-pinning a package the parent's "dnf update -y" has moved past
 # would be a downgrade, which dnf refuses.
-# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
-# mounts the secrets for this RUN alone and never writes them to a layer; the
-# copies pgedge-subscription-manager installs are removed, and the
-# repositories disabled again, before this layer is committed. So the image
-# carries no credentials and no repository it cannot reach.
-trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
@@ -306,6 +342,24 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# The pgEdge repositories authenticate clients with mutual TLS. BuildKit mounts
+# the secrets for this RUN alone and never writes them to a layer; the copies
+# pgedge-subscription-manager installs are removed, and the repositories
+# disabled again, before this layer is committed. So the image carries no
+# credentials and no repository it cannot reach.
+trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
+
+# A chained stage starts FROM a published parent built before the repositories
+# were gated: its pgedge-release predates pgedge-subscription-manager and its
+# repository definition is enabled, pointing at a host it can no longer reach.
+# Disable those definitions and replace the package first, so neither this
+# install nor the channel rewrite below depends on when the parent was built.
+dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true
+command -v pgedge-subscription-manager >/dev/null 2>&1 \
+    || dnf install -y --disablerepo="pgedge*" \
+       https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+
+
 # The repo config is inherited from the parent image, which may have been built
 # from a different channel, so re-point it here rather than relying on the base
 # stage. Idempotent: once rewritten there is no "release" left to match.
@@ -315,12 +369,6 @@ fi
 
 # Dependencies are dnf's to resolve. No second "dnf update -y": that would move
 # ColdFront past its pinned NVR.
-# The pgEdge repositories authenticate clients with mutual TLS. BuildKit
-# mounts the secrets for this RUN alone and never writes them to a layer; the
-# copies pgedge-subscription-manager installs are removed, and the
-# repositories disabled again, before this layer is committed. So the image
-# carries no credentials and no repository it cannot reach.
-trap 'rm -f /etc/pki/pgedge/client.crt /etc/pki/pgedge/client.key; dnf config-manager --set-disabled "pgedge*" >/dev/null 2>&1 || true' EXIT
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y --setopt=install_weak_deps=False < /usr/share/pgedge/coldfront-packages.txt
