@@ -102,9 +102,10 @@ runs:
 
         args=(
           --file pgedge.docker-bake.hcl
-          # The certificate lives in RUNNER_TEMP, outside the bake file's
-          # directory, so bake needs the entitlement to read it.
-          --allow "fs.read=${RUNNER_TEMP}"
+          # The certificate lives outside the bake file's directory, so bake
+          # needs the entitlement to read it. Scoped to the directory the step
+          # above creates rather than all of RUNNER_TEMP.
+          --allow "fs.read=${RUNNER_TEMP}/pgedge-certs"
           --set "default.platform=linux/${arch}"
           --set "default.tags="
           --metadata-file metadata.json
