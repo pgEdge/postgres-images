@@ -6,6 +6,10 @@
 - Upgraded PostGIS to 3.6.4, pgBackRest to 2.59.3, system_stats to 4.0,
   supautils to 3.4.4, and pgvector to 0.8.7 in standard images
 - Upgraded Spock to 5.0.13 in the spock 5 images
+- Added PostgreSQL 19 (rc1) postgres, minimal and standard images for spock 5.
+  They omit pg_tokenizer and vchord_bm25, which have no PG 19 build yet; the
+  tests covering those extensions are skipped on PG 19 until they ship. No
+  coldfront or spock 6 images for PG 19 yet.
 - Upgraded lolor to 1.2.3 in minimal images
 - Upgraded system_stats to 4.1 in standard images
 - Bumped Go for the image tests to 1.26.10 for the eMudhra CA distrust (CVE-2026-111943)
