@@ -8,6 +8,7 @@
 - Upgraded Spock to 5.0.13 in the spock 5 images
 - Upgraded lolor to 1.2.3 in minimal images
 - Upgraded system_stats to 4.1 in standard images
+- Bumped Go for the image tests to 1.26.10 for the eMudhra CA distrust (CVE-2026-111943)
 
 ## 2025-09-03
 
