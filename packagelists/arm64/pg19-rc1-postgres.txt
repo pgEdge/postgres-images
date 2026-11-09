@@ -1,2 +1,0 @@
-pgedge-postgresql19-19-rc1_1.el9
-pgedge-postgresql19-server-19-rc1_1.el9
