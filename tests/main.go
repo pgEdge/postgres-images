@@ -133,11 +133,12 @@ var hasTokenizerBM25 = true
 
 // pgMajorFromImage extracts the PostgreSQL major from an image reference's tag,
 // e.g. "...:18.6-spock5.0.13-standard-1" yields 18 and "...:19-spock5-minimal"
-// yields 19. It returns 0 when the tag does not start with a number, in which
-// case the caller keeps the default and skips nothing.
+// yields 19. It returns 0 when the reference has no tag or the tag does not
+// start with a number. Only a colon after the last "/" starts a tag, so the
+// port in an untagged "127.0.0.1:5000/pgedge-postgres" is not read as a major.
 func pgMajorFromImage(image string) int {
-	tag := image
-	if idx := strings.LastIndex(image, ":"); idx != -1 {
+	tag := ""
+	if idx := strings.LastIndex(image, ":"); idx > strings.LastIndex(image, "/") {
 		tag = image[idx+1:]
 	}
 
