@@ -1,13 +1,12 @@
 # pgEdge Postgres Image Changelog
 
-## Unreleased
+## 2026-11-10
 
 - Upgraded to PostgreSQL 16.16, 17.12, and 18.7
-- Upgraded PostGIS to 3.6.4, pgBackRest to 2.59.3, system_stats to 4.0,
+- Upgraded PostGIS to 3.6.4, pgBackRest to 2.60.0, system_stats to 4.1,
   supautils to 3.4.4, and pgvector to 0.8.7 in standard images
 - Upgraded Spock to 5.0.13 in the spock 5 images
 - Upgraded lolor to 1.2.3 in minimal images
-- Upgraded system_stats to 4.1 in standard images
 - Bumped Go for the image tests to 1.26.10 for the eMudhra CA distrust (CVE-2026-111943)
 - Upgraded ColdFront to 1.0.0-beta3 in coldfront images (Go 1.26.10 and patched
   dependencies for the bundled archiver, compactor and partitioner binaries)
