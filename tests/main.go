@@ -72,7 +72,6 @@ func main() {
 	// TEMPORARY: see hasTokenizerBM25.
 	if major := pgMajorFromImage(image); major >= 19 {
 		hasTokenizerBM25 = false
-		hasSupautils = false
 	}
 
 	// Derive the expected spock major version from the image tag (e.g.
@@ -131,14 +130,6 @@ func spockMajorFromImage(image string) string {
 // Test.TokenizerBM25Only field and the tests it guards once both ship for
 // PG 19; the suite is then the same on every major again.
 var hasTokenizerBM25 = true
-
-// TEMPORARY: supautils 3.2.2 is the only PG 19 build and it aborts the
-// postmaster there -- it registers supautils.privileged_extensions_superuser
-// with a NULL boot_val, tripping the check_GUC_init assertion PG 19 added. The
-// PG 19 standard packagelist therefore omits supautils, so it is left out of
-// shared_preload_libraries and its tests are skipped. Delete this once a PG 19
-// build of supautils >= 3.4.4 ships.
-var hasSupautils = true
 
 // pgMajorFromImage extracts the PostgreSQL major from an image reference's tag,
 // e.g. "...:18.6-spock5.0.13-standard-1" yields 18 and "...:19-spock5-minimal"
@@ -298,12 +289,7 @@ func skippedSuites(flavor string) []string {
 	}
 
 	var out []string
-	if !hasSupautils {
-		// The whole gate suite goes with it: those tests run through supautils'
-		// extension gate, so they cannot run without it.
-		n := len(getSupautilsTests()) + len(getExtensionCustomScriptsTests())
-		out = append(out, fmt.Sprintf("%d skipped: image ships no supautils (see hasSupautils)", n))
-	} else if !hasTokenizerBM25 {
+	if !hasTokenizerBM25 {
 		n := 0
 		for _, t := range getExtensionCustomScriptsTests() {
 			if t.TokenizerBM25Only {
@@ -635,11 +621,6 @@ func (r *TestRunner) Start() error {
 	}
 	if includesStandard(r.flavor) {
 		sharedLibs = "spock,snowflake,pgaudit,supautils,pg_cron"
-		// TEMPORARY: see hasSupautils. Preloading a module the image does not
-		// ship stops the postmaster from starting at all.
-		if !hasSupautils {
-			sharedLibs = "spock,snowflake,pgaudit,pg_cron"
-		}
 		// TEMPORARY: see hasTokenizerBM25. Preloading an extension the image
 		// does not ship stops the postmaster from starting at all.
 		if hasTokenizerBM25 {
@@ -1136,11 +1117,6 @@ func getColdfrontTests() []Test {
 
 func getStandardOnlyTests() []Test {
 	tests := append(getSystemStatsAndVectorTests(), getPostGISAuditBackrestTests()...)
-	// TEMPORARY: see hasSupautils. Both suites need supautils loaded -- the
-	// custom-scripts ones run entirely through its extension gate.
-	if !hasSupautils {
-		return tests
-	}
 	tests = append(tests, getSupautilsTests()...)
 	return append(tests, getExtensionCustomScriptsTests()...)
 }
