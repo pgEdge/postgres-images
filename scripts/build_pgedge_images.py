@@ -306,7 +306,7 @@ all_images: list[PgEdgeImage] = [
     # pg19 images. No coldfront or spock 6 line yet: neither has a PG 19 build.
     *make_flavor_images(
         postgres_version="19-rc2",
-        spock_version="5.0.13",
+        spock_version="5.0.14",
         epochs={"minimal": 1, "standard": 1},
         channels={"minimal": "staging", "standard": "staging"},
         is_latest_for_pg_major=True,
