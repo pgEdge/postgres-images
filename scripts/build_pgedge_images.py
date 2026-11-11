@@ -275,7 +275,7 @@ all_images: list[PgEdgeImage] = [
     # pg16 images
     *make_flavor_images(
         postgres_version="16.16",
-        spock_version="5.0.13",
+        spock_version="5.0.14",
         epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,
@@ -284,7 +284,7 @@ all_images: list[PgEdgeImage] = [
     # pg17 images
     *make_flavor_images(
         postgres_version="17.12",
-        spock_version="5.0.13",
+        spock_version="5.0.14",
         epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,
@@ -293,7 +293,7 @@ all_images: list[PgEdgeImage] = [
     # pg18 images
     *make_flavor_images(
         postgres_version="18.7",
-        spock_version="5.0.13",
+        spock_version="5.0.14",
         epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,

@@ -12,4 +12,4 @@ pgedge-vchord-bm25_16-0.2.2-1.el9
 pgedge-vectorizer_16-1.1-1.el9
 pgedge-system_stats_16-4.1-1.el9
 pgedge-supautils_16-4.0.0-1.el9
-pgedge-safesession_16-1.0-1.el9
+pgedge-safesession_16-1.1-1.el9
