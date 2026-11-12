@@ -261,62 +261,62 @@ def make_flavor_images(
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
-        postgres_version="16.15", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="16.16", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="17.11", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="17.12", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="18.6", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="18.7", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     # pg16 images
     *make_flavor_images(
-        postgres_version="16.15",
-        spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        postgres_version="16.16",
+        spock_version="5.0.14",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 images
     *make_flavor_images(
-        postgres_version="17.11",
-        spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        postgres_version="17.12",
+        spock_version="5.0.14",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 images
     *make_flavor_images(
-        postgres_version="18.6",
-        spock_version="5.0.13",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        postgres_version="18.7",
+        spock_version="5.0.14",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg16 spock60 images
     *make_flavor_images(
-        postgres_version="16.15",
+        postgres_version="16.16",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 7},
+        epochs={"minimal": 1, "standard": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
     *make_flavor_images(
-        postgres_version="17.11",
+        postgres_version="17.12",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 7},
+        epochs={"minimal": 1, "standard": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
     *make_flavor_images(
-        postgres_version="18.6",
+        postgres_version="18.7",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 6, "standard": 7},
+        epochs={"minimal": 1, "standard": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
