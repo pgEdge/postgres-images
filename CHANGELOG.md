@@ -9,8 +9,6 @@
 - Upgraded Snowflake to 2.6.1 in minimal images and safesession to 1.1 in standard images
 - Upgraded lolor to 1.2.3 in minimal images
 - Bumped Go for the image tests to 1.26.10 for the eMudhra CA distrust (CVE-2026-111943)
-- Upgraded ColdFront to 1.0.0-beta3 in coldfront images (Go 1.26.10 and patched
-  dependencies for the bundled archiver, compactor and partitioner binaries)
 
 ## 2025-09-03
 
