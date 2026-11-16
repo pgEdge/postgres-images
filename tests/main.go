@@ -183,11 +183,11 @@ func parseFlags() (string, string) {
 	// reference is the common case -- "@sha256:..." puts hex where the tag
 	// belongs. CI retags by digest before calling this, so it passes a tag.
 	if strings.Contains(*image, "@") {
-		log.Fatalf("Image %q is a digest reference; pass a tagged one, e.g. %s:19-rc2-spock5.0.13-standard-1",
+		log.Fatalf("Image %q is a digest reference; pass a tagged one, e.g. %s:19.0-spock5.0.14-standard-1",
 			*image, strings.SplitN(*image, "@", 2)[0])
 	}
 	if pgMajorFromImage(*image) == 0 {
-		log.Fatalf("Cannot read a PostgreSQL major from image %q. The tag has to start with it, e.g. 18.6-... or 19-rc2-...", *image)
+		log.Fatalf("Cannot read a PostgreSQL major from image %q. The tag has to start with it, e.g. 18.7-... or 19.0-...", *image)
 	}
 
 	return *image, *flavor

@@ -276,14 +276,14 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="19-rc2", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="19.0", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True, package_release_channel="staging",
     ),
     # pg16 images
     *make_flavor_images(
         postgres_version="16.16",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 2},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
@@ -292,7 +292,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.12",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 2},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
@@ -301,14 +301,14 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.7",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 2},
+        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
         channels={"coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg19 images. No coldfront or spock 6 line yet: neither has a PG 19 build.
     *make_flavor_images(
-        postgres_version="19-rc2",
+        postgres_version="19.0",
         spock_version="5.0.14",
         epochs={"minimal": 1, "standard": 1},
         channels={"minimal": "staging", "standard": "staging"},
@@ -319,7 +319,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.16",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 1},
+        epochs={"minimal": 1, "standard": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -327,7 +327,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.12",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 1},
+        epochs={"minimal": 1, "standard": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -335,7 +335,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.7",
         spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 1},
+        epochs={"minimal": 1, "standard": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
