@@ -1,0 +1,28 @@
+# Code owners under the Code Review and Commit Policy v2.0.
+# postgres-images is Tier 2. The last matching line wins.
+
+# Workflows, release, packaging and signing: a code owner or build-packaging.
+/.github/workflows/  @maqeel75 @mmols @pgEdge/build-packaging
+/.github/actions/  @maqeel75 @mmols @pgEdge/build-packaging
+action.yml  @maqeel75 @mmols @pgEdge/build-packaging
+action.yaml  @maqeel75 @mmols @pgEdge/build-packaging
+.goreleaser*.yml  @maqeel75 @mmols @pgEdge/build-packaging
+.goreleaser*.yaml  @maqeel75 @mmols @pgEdge/build-packaging
+*.spec  @maqeel75 @mmols @pgEdge/build-packaging
+debian/  @maqeel75 @mmols @pgEdge/build-packaging
+rpm/  @maqeel75 @mmols @pgEdge/build-packaging
+packaging/  @maqeel75 @mmols @pgEdge/build-packaging
+release*.sh  @maqeel75 @mmols @pgEdge/build-packaging
+sign*.sh  @maqeel75 @mmols @pgEdge/build-packaging
+sign*.py  @maqeel75 @mmols @pgEdge/build-packaging
+Dockerfile*  @maqeel75 @mmols @pgEdge/build-packaging
+/docker-entrypoint.sh  @maqeel75 @mmols @pgEdge/build-packaging
+/docker-ensure-initdb.sh  @maqeel75 @mmols @pgEdge/build-packaging
+/coldfront-entrypoint.sh  @maqeel75 @mmols @pgEdge/build-packaging
+
+# Ownership and AI review configuration: code owners only.
+/CODEOWNERS  @maqeel75 @mmols
+/.github/CODEOWNERS  @maqeel75 @mmols
+/docs/CODEOWNERS  @maqeel75 @mmols
+/REVIEW.md  @maqeel75 @mmols
+/.coderabbit.yaml  @maqeel75 @mmols
