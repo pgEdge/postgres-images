@@ -306,7 +306,7 @@ all_images: list[PgEdgeImage] = [
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
-    # pg19 images. No coldfront or spock 6 line yet: neither has a PG 19 build.
+    # pg19 images. No coldfront line yet: it has no PG 19 build.
     *make_flavor_images(
         postgres_version="19.0",
         spock_version="5.0.14",
@@ -318,27 +318,36 @@ all_images: list[PgEdgeImage] = [
     # pg16 spock60 images
     *make_flavor_images(
         postgres_version="16.16",
-        spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 2},
-        channels={"standard": "staging"},
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1},
+        channels={"minimal": "staging", "standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
     *make_flavor_images(
         postgres_version="17.12",
-        spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 2},
-        channels={"standard": "staging"},
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1},
+        channels={"minimal": "staging", "standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
     *make_flavor_images(
         postgres_version="18.7",
-        spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 2},
-        channels={"standard": "staging"},
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1},
+        channels={"minimal": "staging", "standard": "staging"},
+        is_latest_for_pg_major=True,
+        is_latest_for_spock_major=True,
+    ),
+    # pg19 spock60 images
+    *make_flavor_images(
+        postgres_version="19.0",
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1},
+        channels={"minimal": "staging", "standard": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
