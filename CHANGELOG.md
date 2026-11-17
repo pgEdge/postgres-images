@@ -6,6 +6,8 @@
   spock 5 and spock 6. They omit pg_tokenizer and vchord_bm25, which have no
   PG 19 build yet; the tests covering those extensions are skipped on PG 19
   until they ship. No coldfront images for PG 19 yet.
+- Rebuilt the PostgreSQL 16, 17 and 18 postgres and spock 5 minimal images to pick up
+  OS security fixes (expat, libxml2, krb5, util-linux)
 - Upgraded spock 6 images to 6.0.0-beta2 and added spock 6 coldfront images for
   PostgreSQL 16, 17 and 18
 - Upgraded pg_stat_monitor to 2.4.1 and pgBackRest to 2.60.1 in standard images

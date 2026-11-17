@@ -264,15 +264,15 @@ def make_flavor_images(
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
-        postgres_version="16.16", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="16.16", spock_version="", epoch=2, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="17.12", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="17.12", spock_version="", epoch=2, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="18.7", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="18.7", spock_version="", epoch=2, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
@@ -283,7 +283,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="16.16",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
         channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
@@ -292,7 +292,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.12",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
         channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
@@ -301,7 +301,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.7",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 2, "coldfront": 2},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
         channels={"standard": "staging", "coldfront": "staging"},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
