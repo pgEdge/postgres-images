@@ -1,6 +1,6 @@
 # pgEdge Postgres Image Changelog
 
-## Unreleased
+## 2026-11-17
 
 - Added PostgreSQL 19.0 postgres image, and minimal and standard images for
   spock 5 and spock 6. They omit pg_tokenizer and vchord_bm25, which have no
@@ -11,6 +11,8 @@
 - Upgraded spock 6 images to 6.0.0-beta2 and added spock 6 coldfront images for
   PostgreSQL 16, 17 and 18
 - Upgraded pg_stat_monitor to 2.4.1 and pgBackRest to 2.60.1 in standard images
+- Upgraded pgAudit to 16.2, 17.2 and 18.1 in the PostgreSQL 16, 17 and 18
+  standard images; the PostgreSQL 19 standard images ship pgAudit 19.0
 - Upgraded ColdFront to 1.0.0-beta3 in coldfront images (Go 1.26.10 and patched
   dependencies for the bundled archiver, compactor and partitioner binaries)
 

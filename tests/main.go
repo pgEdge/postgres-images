@@ -1842,5 +1842,21 @@ func getExtensionCustomScriptsTests() []Test {
 			ExpectedOutput:    expectFailureContaining("permission denied for function create_tokenizer"),
 			TokenizerBM25Only: true,
 		},
+		{
+			// The same transfer checked through postgis_topology, which
+			// every standard image ships, so a major without pg_tokenizer
+			// still covers it. CreateTopology() runs as the caller and
+			// writes topology.topology through the after-create.sql grant.
+			Name:           "new owner inherits the postgis_topology grants after-create.sql gave pg_database_owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U new_owner_role -d testdb -t -A -c \"SELECT topology.CreateTopology('probe_reassigned_topo', 4326); SELECT topology.DropTopology('probe_reassigned_topo');\"",
+			ExpectedOutput: expectSuccess,
+		},
+		{
+			Name:           "former owner loses the postgis_topology grants after-create.sql gave pg_database_owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO topology.topology (name, srid, precision, hasz) VALUES ('probe_former_owner', 4326, 0, false);\"",
+			ExpectedOutput: expectFailureContaining("permission denied for table topology"),
+		},
 	}
 }

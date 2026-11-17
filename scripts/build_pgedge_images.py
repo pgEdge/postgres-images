@@ -95,8 +95,8 @@ class PgEdgeImage:
 
     @property
     def postgres_major(self) -> str:
-        # Leading digits, so a pre-release version like "19-rc1" still yields
-        # the major the packages and paths use.
+        # Leading digits, so a pre-release version (e.g. "20-beta1") still
+        # yields the major the packages and paths use.
         return re.match(r"\d+", self.postgres_version).group()
 
     @property
