@@ -83,10 +83,10 @@ command -v pgedge-subscription-manager >/dev/null 2>&1 \
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
-# Patch any OS packages (including transitive dependencies pulled in above)
-# to the latest available errata so the image ships with security fixes.
-# pgEdge packages are excluded: the packagelist pins them, and the tag names
-# those versions, so a newer build in the channel must not replace them.
+# Update eligible packages (including transitive dependencies pulled in
+# above) so the image ships with security fixes, without upgrading pgedge-*
+# packages: the packagelist pins them, and the tag names those versions, so a
+# newer build in the channel must not replace them.
 dnf update -y --exclude='pgedge-*'
 dnf clean all
 
@@ -179,12 +179,14 @@ if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
 
-# A delta: the parent's packages stay as they are. Re-pinning one of the
-# parent's packages to an older version would be a downgrade, which dnf refuses.
+# A delta: the list only adds packages on top of the parent's. It is not
+# meant to re-pin a parent package; an older exact version here would make
+# dnf downgrade it.
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
-# OS errata only; see the postgres stage for why pgEdge packages are excluded.
+# Update eligible packages without upgrading pgedge-* packages; see the
+# postgres stage for why they are excluded.
 dnf update -y --exclude='pgedge-*'
 dnf clean all
 
@@ -244,15 +246,16 @@ if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
 
-# A delta: the parent's packages stay as they are. Re-pinning one of the
-# parent's packages to an older version would be a downgrade, which dnf refuses.
+# A delta: the list only adds packages on top of the parent's. It is not
+# meant to re-pin a parent package; an older exact version here would make
+# dnf downgrade it.
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
-# Patch any OS packages (including transitive dependencies pulled in above)
-# to the latest available errata so the image ships with security fixes.
-# pgEdge packages are excluded: the packagelist pins them, and the tag names
-# those versions, so a newer build in the channel must not replace them.
+# Update eligible packages (including transitive dependencies pulled in
+# above) so the image ships with security fixes, without upgrading pgedge-*
+# packages: the packagelist pins them, and the tag names those versions, so a
+# newer build in the channel must not replace them.
 dnf update -y --exclude='pgedge-*'
 # Patroni's HTTP client dependencies only ship security fixes for Python >= 3.10
 # (urllib3 >= 2.7.0, requests >= 2.33.0), while the system python3 is 3.9. Install
