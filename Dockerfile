@@ -85,7 +85,9 @@ pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/re
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
-dnf update -y
+# pgEdge packages are excluded: the packagelist pins them, and the tag names
+# those versions, so a newer build in the channel must not replace them.
+dnf update -y --exclude='pgedge-*'
 dnf clean all
 
 EOF
@@ -177,12 +179,13 @@ if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
 
-# A delta: re-pinning a package the parent's "dnf update -y" has moved past
-# would be a downgrade, which dnf refuses.
+# A delta: the parent's packages stay as they are. Re-pinning one of the
+# parent's packages to an older version would be a downgrade, which dnf refuses.
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
-dnf update -y
+# OS errata only; see the postgres stage for why pgEdge packages are excluded.
+dnf update -y --exclude='pgedge-*'
 dnf clean all
 
 EOF
@@ -241,14 +244,16 @@ if [[ -n "${PACKAGE_RELEASE_CHANNEL}" ]]; then
     sed -i "s|release|${PACKAGE_RELEASE_CHANNEL}|g" /etc/yum.repos.d/pgedge.repo
 fi
 
-# A delta: re-pinning a package the parent's "dnf update -y" has moved past
-# would be a downgrade, which dnf refuses.
+# A delta: the parent's packages stay as they are. Re-pinning one of the
+# parent's packages to an older version would be a downgrade, which dnf refuses.
 pgedge-subscription-manager install /run/secrets/repo_client_crt /run/secrets/repo_client_key --force
 
 xargs dnf install -y < /usr/share/pgedge/packages.txt
 # Patch any OS packages (including transitive dependencies pulled in above)
 # to the latest available errata so the image ships with security fixes.
-dnf update -y
+# pgEdge packages are excluded: the packagelist pins them, and the tag names
+# those versions, so a newer build in the channel must not replace them.
+dnf update -y --exclude='pgedge-*'
 # Patroni's HTTP client dependencies only ship security fixes for Python >= 3.10
 # (urllib3 >= 2.7.0, requests >= 2.33.0), while the system python3 is 3.9. Install
 # patroni under python3.12 so it can pull the patched urllib3/requests, resolving
