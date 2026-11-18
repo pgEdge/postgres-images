@@ -1858,5 +1858,20 @@ func getExtensionCustomScriptsTests() []Test {
 			Cmd:            "psql -U gate_test_role -d testdb -t -A -c \"INSERT INTO topology.topology (name, srid, precision, hasz) VALUES ('probe_former_owner', 4326, 0, false);\"",
 			ExpectedOutput: expectFailureContaining("permission denied for table topology"),
 		},
+		{
+			// The INSERT probe above cannot see a stale UPDATE or DELETE
+			// grant left on the former owner, so list every write privilege
+			// after-create.sql grants and check who holds each one. SELECT
+			// is left out: postgis_topology grants it to PUBLIC itself.
+			Name:           "only the new owner holds the postgis_topology write grants after-create.sql gave pg_database_owner",
+			StandardOnly:   true,
+			Cmd:            "psql -U postgres -d testdb -t -A -c \"" + topologyWriteGrantsQuery + "\"",
+			ExpectedOutput: expectTrimmed("new_owner_role:topology.layer:DELETE,new_owner_role:topology.layer:INSERT,new_owner_role:topology.layer:UPDATE,new_owner_role:topology.topology:DELETE,new_owner_role:topology.topology:INSERT,new_owner_role:topology.topology:UPDATE,new_owner_role:topology.topology_id_seq:USAGE"),
+		},
 	}
 }
+
+// topologyWriteGrantsQuery lists role:object:privilege for every write
+// privilege postgis_topology's after-create.sql grants, held by either the
+// new or the former owner of testdb.
+const topologyWriteGrantsQuery = `SELECT string_agg(r || ':' || o || ':' || p, ',' ORDER BY r, o, p) FROM unnest(ARRAY['new_owner_role', 'gate_test_role']) AS rr(r) CROSS JOIN LATERAL (SELECT o, p FROM unnest(ARRAY['topology.topology', 'topology.layer']) o, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) p WHERE has_table_privilege(r, o, p) UNION ALL SELECT 'topology.topology_id_seq', 'USAGE' WHERE has_sequence_privilege(r, 'topology.topology_id_seq', 'USAGE')) g`
