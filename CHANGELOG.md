@@ -13,8 +13,7 @@
 - Upgraded pg_stat_monitor to 2.4.1 and pgBackRest to 2.60.1 in standard images
 - Upgraded pgAudit to 16.2, 17.2 and 18.1 in the PostgreSQL 16, 17 and 18
   standard images; the PostgreSQL 19 standard images ship pgAudit 19.0
-- Upgraded ColdFront to 1.0.0-beta3 in coldfront images (Go 1.26.10 and patched
-  dependencies for the bundled archiver, compactor and partitioner binaries)
+- Upgraded ColdFront to 1.0.0-beta4 in coldfront images
 
 ## 2026-11-10
 
