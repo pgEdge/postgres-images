@@ -33,7 +33,19 @@ configs:
       #!/usr/bin/env bash
       set -Eeo pipefail
 
-      EXTENSIONS=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3" "pg_stat_monitor" "pg_tokenizer" "pg_cron" "vectorize" "pgedge_vectorizer")
+      WANTED=("pg_stat_statements" "pgaudit" "snowflake" "spock" "postgis-3" "pg_stat_monitor" "pg_tokenizer" "pg_cron" "vectorize" "pgedge_vectorizer")
+
+      # Preload only the libraries this image ships: preloading a missing one
+      # stops the postmaster. Not every extension has a build for every major.
+      PKGLIBDIR=$$(pg_config --pkglibdir)
+      EXTENSIONS=()
+      for EXT in "$${WANTED[@]}"; do
+        if [[ -f "$$PKGLIBDIR/$$EXT.so" ]]; then
+          EXTENSIONS+=("$$EXT")
+        else
+          echo "Skipping $$EXT: not available in this image"
+        fi
+      done
 
       PGCONF="$$PGDATA/postgresql.conf"
 
@@ -95,6 +107,11 @@ configs:
 
       echo "Initializing extensions: $${EXTENSIONS[*]}"
       for EXT in "$${EXTENSIONS[@]}"; do
+        AVAILABLE=$$(psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '$$EXT';")
+        if [[ "$$AVAILABLE" != "1" ]]; then
+          echo "Skipping extension $$EXT: not available in this image"
+          continue
+        fi
         echo "Creating extension: $$EXT"
         psql -v ON_ERROR_STOP=1 --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS \"$$EXT\";"
       done

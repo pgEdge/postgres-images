@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 
 from dataclasses import dataclass
@@ -94,7 +95,9 @@ class PgEdgeImage:
 
     @property
     def postgres_major(self) -> str:
-        return self.postgres_version.split(".")[0]
+        # Leading digits, so a pre-release version (e.g. "20-beta1") still
+        # yields the major the packages and paths use.
+        return re.match(r"\d+", self.postgres_version).group()
 
     @property
     def spock_major(self) -> str:
@@ -261,22 +264,26 @@ def make_flavor_images(
 all_images: list[PgEdgeImage] = [
     # PostgreSQL-only base, one per major; no spock segment.
     PgEdgeImage(
-        postgres_version="16.16", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="16.16", spock_version="", epoch=2, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="17.12", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="17.12", spock_version="", epoch=2, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     PgEdgeImage(
-        postgres_version="18.7", spock_version="", epoch=1, flavor="postgres",
+        postgres_version="18.7", spock_version="", epoch=2, flavor="postgres",
+        is_latest_for_pg_major=True,
+    ),
+    PgEdgeImage(
+        postgres_version="19.0", spock_version="", epoch=1, flavor="postgres",
         is_latest_for_pg_major=True,
     ),
     # pg16 images
     *make_flavor_images(
         postgres_version="16.16",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -284,7 +291,7 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="17.12",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
@@ -292,30 +299,46 @@ all_images: list[PgEdgeImage] = [
     *make_flavor_images(
         postgres_version="18.7",
         spock_version="5.0.14",
-        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        epochs={"minimal": 2, "standard": 2, "coldfront": 2},
+        is_latest_for_pg_major=True,
+        is_latest_for_spock_major=True,
+    ),
+    # pg19 images. No coldfront line yet: it has no PG 19 build.
+    *make_flavor_images(
+        postgres_version="19.0",
+        spock_version="5.0.14",
+        epochs={"minimal": 1, "standard": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg16 spock60 images
     *make_flavor_images(
         postgres_version="16.16",
-        spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 1},
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg17 spock60 images
     *make_flavor_images(
         postgres_version="17.12",
-        spock_version="6.0.0-beta1",
-        epochs={"minimal": 1, "standard": 1},
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
     ),
     # pg18 spock60 images
     *make_flavor_images(
         postgres_version="18.7",
-        spock_version="6.0.0-beta1",
+        spock_version="6.0.0-beta2",
+        epochs={"minimal": 1, "standard": 1, "coldfront": 1},
+        is_latest_for_pg_major=True,
+        is_latest_for_spock_major=True,
+    ),
+    # pg19 spock60 images
+    *make_flavor_images(
+        postgres_version="19.0",
+        spock_version="6.0.0-beta2",
         epochs={"minimal": 1, "standard": 1},
         is_latest_for_pg_major=True,
         is_latest_for_spock_major=True,
