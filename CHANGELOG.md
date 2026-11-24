@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Upgraded Spock to 5.0.15-rc2 in the spock 5 images, built from the staging
+- Upgraded Spock to 5.0.15 in the spock 5 images, built from the staging
   package channel
 
 ## 2026-11-17
