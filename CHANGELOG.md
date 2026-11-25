@@ -1,5 +1,9 @@
 # pgEdge Postgres Image Changelog
 
+## Unreleased
+
+- Upgraded Spock to 5.0.15 in the spock 5 images
+
 ## 2026-11-17
 
 - Added PostgreSQL 19.0 postgres image, and minimal and standard images for
